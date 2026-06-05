@@ -466,7 +466,8 @@ export class TelegramArchiveClient {
       const id = adapter.id._serialized;
       
       const ocr = state.messages?.[id]?.ocr || null;
-      
+      const transcription = state.messages?.[id]?.transcription || null;
+
       formattedMessages.push({
         id,
         timestamp: date.getTime(),
@@ -478,6 +479,7 @@ export class TelegramArchiveClient {
         hasMedia: adapter.hasMedia,
         hasQuotedMsg: adapter.hasQuotedMsg,
         ocr,
+        transcription,
       });
     }
     return formattedMessages;

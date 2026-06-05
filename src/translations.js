@@ -136,6 +136,15 @@ export const translations = {
     preparedForTranscription: "Prepared for voice/video transcription",
     cpuFallback: "CPU fallback",
     transcriptionReady: "Transcription-ready",
+    transcriptionPending: "Voice/video pending",
+    transcriptionDone: "Transcribed",
+    transcriptionFailed: "Transcription failed",
+    transcribeMessage: "Transcribe audio",
+    processingTranscription: "Transcribing...",
+    transcriptionProgress: "Transcription progress",
+    transcriptionComplete: "Transcription complete.",
+    scanMediaBacklog: "Scan media backlog",
+    backgroundMediaIdle: "No pending OCR or transcription",
     
     // Telegram
     telegram: "Telegram",
@@ -345,6 +354,15 @@ export const translations = {
     preparedForTranscription: "جاهز لتفريغ الصوت والفيديو",
     cpuFallback: "تشغيل عبر المعالج",
     transcriptionReady: "جاهز للتفريغ الصوتي",
+    transcriptionPending: "صوت/فيديو قيد الانتظار",
+    transcriptionDone: "تم التفريغ",
+    transcriptionFailed: "فشل التفريغ الصوتي",
+    transcribeMessage: "تفريغ الصوت",
+    processingTranscription: "جاري التفريغ...",
+    transcriptionProgress: "تقدم التفريغ",
+    transcriptionComplete: "اكتمل التفريغ الصوتي.",
+    scanMediaBacklog: "فحص قائمة الوسائط",
+    backgroundMediaIdle: "لا توجد OCR أو تفريغ صوتي معلّق",
     
     // Telegram
     telegram: "تلغرام",

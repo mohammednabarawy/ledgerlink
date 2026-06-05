@@ -236,6 +236,9 @@ function App() {
   const [ocrScanningMap, setOcrScanningMap] = useState({});
   const [ocrResultsMap, setOcrResultsMap] = useState({});
   const [ocrProgress, setOcrProgress] = useState(null);
+  const [transcriptionScanningMap, setTranscriptionScanningMap] = useState({});
+  const [transcriptionResultsMap, setTranscriptionResultsMap] = useState({});
+  const [transcriptionProgress, setTranscriptionProgress] = useState(null);
   const [backgroundOcrStatusMap, setBackgroundOcrStatusMap] = useState(demoBoot?.backgroundOcrStatusMap ?? {});
   const [localServiceCapabilities, setLocalServiceCapabilities] = useState(demoBoot?.localServiceCapabilities ?? null);
   const ocrSettings = activeProfile?.ocr || {};
@@ -478,6 +481,9 @@ function App() {
     });
     window.api.onOCRProgress?.((data) => {
       setOcrProgress(data);
+    });
+    window.api.onTranscriptionProgress?.((data) => {
+      setTranscriptionProgress(data);
     });
     window.api.onBackgroundOCRStatus?.((data) => {
       if (!data?.chatId) return;
@@ -803,12 +809,13 @@ function App() {
       setAssistantTargetId(lastIncoming?.id || messages[messages.length - 1]?.id || null);
       
       const initialOcr = {};
+      const initialTranscription = {};
       messages.forEach(msg => {
-        if (msg.ocr) {
-          initialOcr[msg.id] = msg.ocr;
-        }
+        if (msg.ocr) initialOcr[msg.id] = msg.ocr;
+        if (msg.transcription) initialTranscription[msg.id] = msg.transcription;
       });
       setOcrResultsMap(initialOcr);
+      setTranscriptionResultsMap(initialTranscription);
     } catch (error) {
       setReviewError(error.message || t('reviewError'));
     } finally {
@@ -920,6 +927,59 @@ function App() {
   const handleReplyToMessage = (messageId) => {
     setAssistantTargetId(messageId);
     setAssistantPanelOpen(true);
+  };
+
+  const isTranscribableMessage = (message) => (
+    message?.type === 'ptt'
+    || message?.type === 'audio'
+    || message?.type === 'video'
+    || (message?.hasMedia && /\.(opus|mp3|m4a|ogg|wav|mp4|mov|mkv|webm)$/i.test(message.body || ''))
+  );
+
+  const handleRunTranscriptionForMessage = async (messageId) => {
+    if (!selectedChat || !vaultPath || !window.api?.transcribeMessage) return;
+    setTranscriptionScanningMap((prev) => ({ ...prev, [messageId]: true }));
+    setTranscriptionProgress({
+      chatId: selectedChat.id,
+      messageId,
+      status: t('processingTranscription'),
+      progress: 0,
+      phase: 'prepare',
+    });
+    try {
+      const res = await window.api.transcribeMessage(selectedChat.id, messageId, vaultPath);
+      if (res.success && res.transcription) {
+        setTranscriptionResultsMap((prev) => ({ ...prev, [messageId]: res.transcription }));
+        setReviewMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, transcription: res.transcription } : m)));
+        setTranscriptionProgress({
+          chatId: selectedChat.id,
+          messageId,
+          status: t('transcriptionComplete'),
+          progress: 100,
+          phase: 'complete',
+        });
+      } else {
+        setTranscriptionProgress({
+          chatId: selectedChat.id,
+          messageId,
+          status: res.error || t('transcriptionFailed'),
+          progress: 100,
+          phase: 'error',
+          error: res.error || t('transcriptionFailed'),
+        });
+      }
+    } catch (err) {
+      setTranscriptionProgress({
+        chatId: selectedChat.id,
+        messageId,
+        status: err.message || t('transcriptionFailed'),
+        progress: 100,
+        phase: 'error',
+        error: err.message || t('transcriptionFailed'),
+      });
+    } finally {
+      setTranscriptionScanningMap((prev) => ({ ...prev, [messageId]: false }));
+    }
   };
 
   const handleRunOCRForMessage = async (messageId) => {
@@ -1168,9 +1228,13 @@ function App() {
   const activePlatformLabel = activePlatform === 'whatsapp' ? 'WhatsApp' : 'Telegram';
   const desktopStatus = isWorking
     ? archiveStatus || t('startingArchive')
-    : ocrProgress?.phase && ocrProgress.phase !== 'complete'
-      ? ocrProgress.status || t('processingOCR')
-      : `${activePlatformLabel} · ${isPlatformAuthenticated ? t('connected') : t('loginNeeded')} · ${vaultPath ? t('vaultReady') : t('noVaultSelected')}`;
+    : transcriptionProgress?.phase && transcriptionProgress.phase !== 'complete' && transcriptionProgress.phase !== 'error'
+      ? transcriptionProgress.status || t('processingTranscription')
+      : ocrProgress?.phase && ocrProgress.phase !== 'complete' && ocrProgress.phase !== 'error'
+        ? ocrProgress.status || t('processingOCR')
+        : selectedBackgroundOcr?.status === 'running'
+          ? selectedBackgroundOcr.current || t('backgroundMediaIdle')
+          : `${activePlatformLabel} · ${isPlatformAuthenticated ? t('connected') : t('loginNeeded')} · ${vaultPath ? t('vaultReady') : t('noVaultSelected')}`;
 
   return (
     <div className="h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden selection:bg-emerald-500/30 font-sans flex flex-col" dir={isRtl ? 'rtl' : 'ltr'}>
@@ -1729,7 +1793,7 @@ function App() {
                           <div className="flex flex-wrap gap-2">
                             <button disabled={!selectedChat || !vaultPath} onClick={handleStartBackgroundOCR} className="toolbar-button">
                               <Search size={16} />
-                              {t('scanArchiveBacklog')}
+                              {t('scanMediaBacklog')}
                             </button>
                             <button disabled={!selectedChat || reviewLoading} onClick={handleReviewChat} className="toolbar-button">
                               <Eye size={16} />
@@ -1769,9 +1833,11 @@ function App() {
                           </div>
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-100">{t('ocrBacklog')}</p>
+                              <p className="text-sm font-semibold text-slate-100">
+                                {selectedBackgroundOcr?.phase === 'transcription' ? t('transcriptionProgress') : t('ocrBacklog')}
+                              </p>
                               <p className="truncate text-xs text-slate-400">
-                                {selectedBackgroundOcr?.current || t('backgroundOcrIdle')}
+                                {selectedBackgroundOcr?.current || t('backgroundMediaIdle')}
                               </p>
                             </div>
                             <span className="text-sm font-bold text-slate-100">{Math.round(selectedBackgroundOcr?.progress || 0)}%</span>
@@ -1785,7 +1851,8 @@ function App() {
                             <span>{t('failed')}: {selectedBackgroundOcr?.failed || 0}</span>
                             <span>{t('documentOcrPending')}: {selectedBackgroundOcr?.documentPending || 0}</span>
                             <span>{t('documentOcrDone')}: {selectedBackgroundOcr?.documentDone || 0}</span>
-                            <span>{t('transcriptionReady')}: {selectedBackgroundOcr?.transcriptionPending || 0}</span>
+                            <span>{t('transcriptionPending')}: {selectedBackgroundOcr?.transcriptionPending || 0}</span>
+                            <span>{t('transcriptionDone')}: {selectedBackgroundOcr?.transcriptionDone || 0}</span>
                           </div>
                         </div>
                       </div>
@@ -2525,6 +2592,43 @@ function App() {
                                   <summary className="cursor-pointer hover:text-slate-300">Raw OCR Text</summary>
                                   <pre className="mt-1 whitespace-pre-wrap font-mono text-[10px] bg-slate-950 p-2 rounded leading-relaxed">{ocrResultsMap[message.id].text}</pre>
                                 </details>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {isTranscribableMessage(message) && (
+                          <div className="mt-2 flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRunTranscriptionForMessage(message.id)}
+                              disabled={transcriptionScanningMap[message.id] || !transcriptionReady}
+                              className="toolbar-button text-xs py-1.5 px-3 self-start flex items-center gap-1.5 bg-slate-800 hover:bg-emerald-500/10 hover:border-emerald-500/30 disabled:opacity-50"
+                            >
+                              {transcriptionScanningMap[message.id] ? (
+                                <Loader2 size={12} className="animate-spin text-emerald-300" />
+                              ) : (
+                                <Mic2 size={12} className="text-emerald-300" />
+                              )}
+                              {transcriptionScanningMap[message.id] ? t('processingTranscription') : t('transcribeMessage')}
+                            </button>
+                            {transcriptionProgress?.messageId === message.id && (
+                              <div className={`ocr-inline-progress ${transcriptionProgress.phase === 'error' ? 'error' : ''}`} role={transcriptionProgress.phase === 'error' ? 'alert' : 'status'}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate">{transcriptionProgress.status || t('processingTranscription')}</span>
+                                  <strong>{Math.round(transcriptionProgress.progress || 0)}%</strong>
+                                </div>
+                                <div className="ocr-progress-track" aria-hidden="true">
+                                  <div style={{ width: `${Math.max(0, Math.min(100, transcriptionProgress.progress || 0))}%` }} />
+                                </div>
+                              </div>
+                            )}
+                            {transcriptionResultsMap[message.id]?.text && (
+                              <div className="text-xs p-3 rounded bg-slate-900/50 border border-white/5 space-y-1.5 max-w-lg mt-1" dir="auto">
+                                <p className="font-semibold text-sky-300 flex items-center gap-1">
+                                  <Mic2 size={12} /> {t('localTranscription')}
+                                </p>
+                                <p className="whitespace-pre-wrap text-slate-200">{transcriptionResultsMap[message.id].text}</p>
                               </div>
                             )}
                           </div>

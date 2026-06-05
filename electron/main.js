@@ -8,13 +8,26 @@ import { createRequire } from 'module';
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import fs from 'fs';
-import { archiveChat, getChatMessages, importHistory, repairArchiveOrder, resolveArchivePaths } from './archiver.js';
+import {
+  archiveChat,
+  formatOcrCalloutBlock,
+  formatTranscriptionCalloutBlock,
+  getChatMessages,
+  importHistory,
+  repairArchiveOrder,
+  resolveArchivePaths,
+} from './archiver.js';
 import { sendWhatsAppMessage } from './chat-send.js';
 import { ProfileManager } from './profile-manager.js';
 import { runOCR } from './ocr-engine.js';
 import { extractReceiptFields } from './ocr-extractor.js';
 import { detectDocumentOcrSupport, runDocumentOCR } from './document-ocr.js';
-import { detectTranscriptionStack, getDownloadedModels, downloadWhisperModel } from './transcription-service.js';
+import {
+  detectTranscriptionStack,
+  getDownloadedModels,
+  downloadWhisperModel,
+  runTranscription,
+} from './transcription-service.js';
 import { TelegramArchiveClient } from './telegram-client.js';
 import { setTelegramCredentialsProvider } from './telegram-config.js';
 import { AssistantService } from './assistant-service.js';
@@ -301,28 +314,7 @@ function writeArchiveStateFile(stateFile, state) {
   fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf8');
 }
 
-function ocrCalloutBlock(ocrData) {
-  const lines = [
-    `> [!receipt] **OCR Extracted** - Confidence: ${Math.round(ocrData.confidence || 0)}%`,
-  ];
-  if (ocrData.imageFile) lines.push(`> **Source attachment:** ![[${ocrData.imageFile.replace(/\\/g, '/')}]]`);
-  if (ocrData.vendor) lines.push(`> **Vendor:** ${ocrData.vendor}`);
-  if (ocrData.date) lines.push(`> **Date:** ${ocrData.date}`);
-  if (ocrData.total) lines.push(`> **Total:** ${ocrData.currency || 'SAR'} ${ocrData.total}`);
-  if (ocrData.tax) lines.push(`> **VAT/Tax:** ${ocrData.currency || 'SAR'} ${ocrData.tax}`);
-  lines.push('>');
-  lines.push('> <details><summary>Full OCR Text</summary>');
-  lines.push('>');
-  for (const line of String(ocrData.text || '').split('\n')) {
-    lines.push(`> ${line}`);
-  }
-  lines.push('>');
-  lines.push('> </details>');
-  lines.push('>');
-  return `${lines.join('\n')}\n`;
-}
-
-function injectOcrIntoMarkdown(paths, messageId, ocrData) {
+function injectMediaCalloutIntoMarkdown(paths, messageId, callout, blockPattern) {
   if (!fs.existsSync(paths.chatsDir)) return false;
   const marker = `<!-- wa:id: ${messageId} -->`;
   for (const filename of fs.readdirSync(paths.chatsDir).filter(name => name.endsWith('.md'))) {
@@ -337,8 +329,7 @@ function injectOcrIntoMarkdown(paths, messageId, ocrData) {
     const normalizedEnd = blockEnd === -1 ? content.length : blockEnd + 5;
     let block = content.slice(normalizedStart, normalizedEnd);
 
-    block = block.replace(/\n?> \[!receipt\] \*\*OCR Extracted\*\*[\s\S]*?> <\/details>\n?>\n?/g, '\n');
-    const callout = ocrCalloutBlock(ocrData);
+    block = block.replace(blockPattern, '\n');
     const mediaLine = block.match(/^> !\[\[[^\]]+\]\]\n>\n/m);
     if (mediaLine?.index !== undefined) {
       const insertAt = mediaLine.index + mediaLine[0].length;
@@ -353,6 +344,28 @@ function injectOcrIntoMarkdown(paths, messageId, ocrData) {
     return true;
   }
   return false;
+}
+
+function injectOcrIntoMarkdown(paths, messageId, ocrData) {
+  return injectMediaCalloutIntoMarkdown(
+    paths,
+    messageId,
+    formatOcrCalloutBlock(ocrData, paths.chatsDir),
+    /\n?(?:(?:> >|>)\s*\[!receipt\][\s\S]*?(?:> >|>)\s*<\/details>\n?(?:> >|>)\n?|> \*\*OCR Extracted\*\*[\s\S]*?\n>\n(?=\n|> ))/g,
+  );
+}
+
+function injectTranscriptionIntoMarkdown(paths, messageId, transcriptionData) {
+  return injectMediaCalloutIntoMarkdown(
+    paths,
+    messageId,
+    formatTranscriptionCalloutBlock(transcriptionData, paths.chatsDir),
+    /\n?(?:(?:> >|>)\s*\[!transcript\][\s\S]*?(?=\n> \n> (?:<div dir=|\*Tags:)|\n<!--|\n---\n|$)|> \*\*Transcription\*\*[\s\S]*?\n>\n(?=\n|> ))/g,
+  );
+}
+
+function getTranscriptionModelSize() {
+  return profileManager?.getGlobalSettings?.()?.transcription?.modelSize || 'tiny';
 }
 
 function emitBackgroundOcrStatus(chatId, patch) {
@@ -414,52 +427,76 @@ async function runBackgroundOcrForArchive({ chatId, vaultPath, platform, chatNam
   const state = readArchiveStateFile(paths.stateFile);
   const imageCandidates = resolveOcrCandidates(paths, state).map(candidate => ({ ...candidate, kind: 'image' }));
   const documentCandidates = resolveDocumentOcrCandidates(state).map(candidate => ({ ...candidate, kind: 'document' }));
-  const candidates = [...imageCandidates, ...documentCandidates];
-  const transcriptionPending = resolveTranscriptionCandidates(state).length;
+  const ocrCandidates = [...imageCandidates, ...documentCandidates];
+  const transcriptionCandidates = resolveTranscriptionCandidates(state);
   const documentTotal = documentCandidates.length;
+  const transcriptionTotal = transcriptionCandidates.length;
+  const totalWork = ocrCandidates.length + transcriptionTotal;
 
-  if (!candidates.length) {
+  if (!totalWork) {
     emitBackgroundOcrStatus(chatId, {
       status: 'idle',
       progress: 100,
-      current: 'No pending OCR attachments',
+      current: 'No pending OCR or transcription attachments',
       total: 0,
       done: 0,
       failed: 0,
       documentPending: 0,
       documentDone: 0,
       documentFailed: 0,
-      transcriptionPending,
+      transcriptionPending: 0,
+      transcriptionTotal: 0,
+      transcriptionDone: 0,
+      transcriptionFailed: 0,
+      phase: 'idle',
     });
-    return { total: 0, done: 0, failed: 0, documentPending: 0, documentDone: 0, documentFailed: 0, transcriptionPending };
+    return {
+      total: 0,
+      done: 0,
+      failed: 0,
+      documentPending: 0,
+      documentDone: 0,
+      documentFailed: 0,
+      transcriptionPending: 0,
+      transcriptionDone: 0,
+      transcriptionFailed: 0,
+    };
   }
 
   let done = 0;
   let failed = 0;
   let documentDone = 0;
   let documentFailed = 0;
-  emitBackgroundOcrStatus(chatId, {
-    status: 'running',
-    progress: 0,
-    total: candidates.length,
-    done,
-    failed,
-    current: 'Starting background OCR',
-    documentPending: documentTotal,
-    documentDone,
-    documentFailed,
-    transcriptionPending,
-  });
+  let transcriptionDone = 0;
+  let transcriptionFailed = 0;
+  let completedUnits = 0;
 
-  for (const { id, record, kind } of candidates) {
+  const emitRunning = (current, phase = 'ocr') => {
+    emitBackgroundOcrStatus(chatId, {
+      status: 'running',
+      progress: Math.max(1, Math.min(99, Math.round((completedUnits / totalWork) * 100))),
+      total: ocrCandidates.length,
+      done,
+      failed,
+      current,
+      documentPending: Math.max(0, documentTotal - documentDone - documentFailed),
+      documentDone,
+      documentFailed,
+      transcriptionPending: Math.max(0, transcriptionTotal - transcriptionDone - transcriptionFailed),
+      transcriptionTotal,
+      transcriptionDone,
+      transcriptionFailed,
+      phase,
+    });
+  };
+
+  emitRunning('Starting background media processing', ocrCandidates.length ? 'ocr' : 'transcription');
+
+  for (const { id, record, kind } of ocrCandidates) {
     const rel = record.media.relativePath;
     const absolutePath = path.join(paths.baseDir, rel);
     try {
-      emitBackgroundOcrStatus(chatId, {
-        status: 'running',
-        current: path.basename(rel),
-        progress: Math.round(((done + failed) / candidates.length) * 100),
-      });
+      emitRunning(path.basename(rel), 'ocr');
       if (!fs.existsSync(absolutePath)) throw new Error('Attachment file missing');
 
       const ocrLang = activeProfile.ocr?.language || 'eng+ara';
@@ -467,14 +504,21 @@ async function runBackgroundOcrForArchive({ chatId, vaultPath, platform, chatNam
       const ocrResult = await runner(absolutePath, ocrLang, {
         onProgress: (event) => {
           const itemProgress = typeof event.progress === 'number' ? event.progress : 0;
-          const overall = ((done + failed + itemProgress) / candidates.length) * 100;
           emitBackgroundOcrStatus(chatId, {
             status: 'running',
             current: `${path.basename(rel)} · ${event.status || 'recognizing text'}`,
-            progress: Math.max(1, Math.min(99, Math.round(overall))),
+            progress: Math.max(1, Math.min(99, Math.round(((completedUnits + itemProgress) / totalWork) * 100))),
+            total: ocrCandidates.length,
+            done,
+            failed,
             documentPending: Math.max(0, documentTotal - documentDone - documentFailed),
             documentDone,
             documentFailed,
+            transcriptionPending: Math.max(0, transcriptionTotal - transcriptionDone - transcriptionFailed),
+            transcriptionTotal,
+            transcriptionDone,
+            transcriptionFailed,
+            phase: 'ocr',
           });
         },
       });
@@ -500,38 +544,100 @@ async function runBackgroundOcrForArchive({ chatId, vaultPath, platform, chatNam
         },
       };
       writeArchiveStateFile(paths.stateFile, state);
-      emitBackgroundOcrStatus(chatId, {
-        status: 'running',
-        current: `${path.basename(rel)} · ${error.message}`,
-        progress: Math.max(1, Math.min(99, Math.round(((done + failed) / candidates.length) * 100))),
-        documentPending: Math.max(0, documentTotal - documentDone - documentFailed),
-        documentDone,
-        documentFailed,
+      emitRunning(`${path.basename(rel)} · ${error.message}`, 'ocr');
+    } finally {
+      completedUnits++;
+    }
+  }
+
+  const modelSize = getTranscriptionModelSize();
+  const userDataPath = app.getPath('userData');
+  const transcriptionLang = activeProfile.ocr?.language || 'eng+ara';
+
+  for (const { id, record } of transcriptionCandidates) {
+    const rel = record.media.relativePath;
+    const absolutePath = path.join(paths.baseDir, rel);
+    try {
+      emitRunning(`${path.basename(rel)} · transcribing`, 'transcription');
+      if (!fs.existsSync(absolutePath)) throw new Error('Attachment file missing');
+
+      const result = await runTranscription(absolutePath, transcriptionLang, {
+        userDataPath,
+        modelSize,
+        onProgress: (event) => {
+          const itemProgress = typeof event.progress === 'number' ? event.progress : 0;
+          emitBackgroundOcrStatus(chatId, {
+            status: 'running',
+            current: `${path.basename(rel)} · ${event.status || 'transcribing'}`,
+            progress: Math.max(1, Math.min(99, Math.round(((completedUnits + itemProgress) / totalWork) * 100))),
+            total: ocrCandidates.length,
+            done,
+            failed,
+            transcriptionPending: Math.max(0, transcriptionTotal - transcriptionDone - transcriptionFailed),
+            transcriptionTotal,
+            transcriptionDone,
+            transcriptionFailed,
+            phase: 'transcription',
+          });
+        },
       });
+
+      const transcriptionData = {
+        text: result.text,
+        confidence: result.confidence,
+        sourceFile: rel.replace(/\\/g, '/'),
+        at: new Date().toISOString(),
+      };
+      state.messages[id] = { ...record, transcription: transcriptionData };
+      injectTranscriptionIntoMarkdown(paths, id, transcriptionData);
+      transcriptionDone++;
+      writeArchiveStateFile(paths.stateFile, state);
+    } catch (error) {
+      transcriptionFailed++;
+      state.messages[id] = {
+        ...record,
+        transcriptionError: {
+          message: error.message,
+          at: new Date().toISOString(),
+          file: rel,
+        },
+      };
+      writeArchiveStateFile(paths.stateFile, state);
+      emitRunning(`${path.basename(rel)} · ${error.message}`, 'transcription');
+    } finally {
+      completedUnits++;
     }
   }
 
   emitBackgroundOcrStatus(chatId, {
     status: 'complete',
     progress: 100,
-    current: 'Background OCR complete',
-    total: candidates.length,
+    current: transcriptionTotal
+      ? `Background processing complete (${transcriptionDone} transcribed)`
+      : 'Background OCR complete',
+    total: ocrCandidates.length,
     done,
     failed,
     documentPending: Math.max(0, documentTotal - documentDone - documentFailed),
     documentDone,
     documentFailed,
-    transcriptionPending,
+    transcriptionPending: Math.max(0, transcriptionTotal - transcriptionDone - transcriptionFailed),
+    transcriptionTotal,
+    transcriptionDone,
+    transcriptionFailed,
+    phase: 'complete',
   });
   mainWindow?.setProgressBar?.(-1);
   return {
-    total: candidates.length,
+    total: ocrCandidates.length,
     done,
     failed,
     documentPending: Math.max(0, documentTotal - documentDone - documentFailed),
     documentDone,
     documentFailed,
-    transcriptionPending,
+    transcriptionPending: Math.max(0, transcriptionTotal - transcriptionDone - transcriptionFailed),
+    transcriptionDone,
+    transcriptionFailed,
   };
 }
 
@@ -1222,9 +1328,10 @@ ipcMain.handle('ocr:startBackgroundForChat', async (event, chatId, vaultPath) =>
 });
 
 ipcMain.handle('services:getLocalCapabilities', async () => {
+  const modelSize = getTranscriptionModelSize();
   const [documentOcr, transcription] = await Promise.all([
     detectDocumentOcrSupport(),
-    detectTranscriptionStack(app.getPath('userData')),
+    detectTranscriptionStack(app.getPath('userData'), modelSize),
   ]);
   return { documentOcr, transcription };
 });
@@ -1490,6 +1597,134 @@ ipcMain.handle('ocr:scanMessage', async (event, chatId, messageId, vaultPath) =>
   } catch (error) {
     console.error('OCR scan failed:', error);
     sendOcrProgress({ status: error.message || 'OCR failed.', progress: 100, phase: 'error', error: error.message });
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('transcription:scanMessage', async (event, chatId, messageId, vaultPath) => {
+  const sendProgress = (payload) => {
+    if (mainWindow?.setProgressBar && typeof payload.progress === 'number') {
+      mainWindow.setProgressBar(payload.progress > 0 && payload.progress < 100 ? payload.progress / 100 : -1);
+    }
+    mainWindow?.webContents?.send('transcription:progress', {
+      chatId,
+      messageId,
+      ...payload,
+    });
+  };
+
+  try {
+    sendProgress({ status: 'Preparing transcription...', progress: 5, phase: 'prepare' });
+    const activeProfile = profileManager.getActiveProfile();
+    const isTelegram = chatId.startsWith('tg:');
+    let chatName = 'Telegram Chat';
+    let paths;
+
+    if (isTelegram) {
+      const rawChatId = chatId.substring(3);
+      const chatEntity = await telegramClient.client.getEntity(rawChatId);
+      chatName = chatEntity.title || chatEntity.name || 'Telegram Chat';
+      paths = resolveArchivePaths(chatName, vaultPath, activeProfile.name, 'telegram');
+    } else {
+      const chat = await whatsappClient.getChatById(chatId);
+      chatName = chat.name;
+      paths = resolveArchivePaths(chat, vaultPath, activeProfile.name, 'whatsapp');
+    }
+
+    const stateFile = paths.stateFile;
+    let state = readArchiveStateFile(stateFile);
+    const shortId = messageId.split(':').pop() || messageId;
+    const stateMedia = state.messages?.[messageId]?.media;
+    let attachmentPath = null;
+
+    if (stateMedia?.relativePath && TRANSCRIPTION_FILE_EXTENSIONS.test(stateMedia.relativePath)) {
+      const candidate = path.join(paths.baseDir, stateMedia.relativePath);
+      if (fs.existsSync(candidate)) attachmentPath = candidate;
+    }
+
+    if (!attachmentPath) {
+      const searchDirs = [paths.audioDir, paths.mediaDir, paths.docsDir].filter((dir) => fs.existsSync(dir));
+      for (const dir of searchDirs) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!entry.isFile() || !TRANSCRIPTION_FILE_EXTENSIONS.test(entry.name)) continue;
+          if (entry.name.startsWith(shortId) || entry.name.includes(shortId)) {
+            attachmentPath = path.join(dir, entry.name);
+            break;
+          }
+        }
+        if (attachmentPath) break;
+      }
+    }
+
+    if (!attachmentPath) {
+      throw new Error(`Audio/video attachment for message ${messageId} was not found. Archive this chat again, then retry transcription.`);
+    }
+
+    sendProgress({ status: 'Transcribing...', progress: 20, phase: 'transcribe' });
+    const rel = path.relative(paths.baseDir, attachmentPath).replace(/\\/g, '/');
+    const result = await runTranscription(attachmentPath, activeProfile.ocr?.language || 'eng+ara', {
+      userDataPath: app.getPath('userData'),
+      modelSize: getTranscriptionModelSize(),
+      onProgress: (event) => {
+        const itemProgress = typeof event.progress === 'number' ? event.progress : 0;
+        sendProgress({
+          status: event.status || 'Transcribing...',
+          progress: Math.min(90, 20 + Math.round(itemProgress * 70)),
+          phase: 'transcribe',
+        });
+      },
+    });
+
+    const transcriptionData = {
+      text: result.text,
+      confidence: result.confidence,
+      sourceFile: rel,
+      at: new Date().toISOString(),
+    };
+
+    if (!state.messages) state.messages = {};
+    if (!state.messages[messageId]) {
+      state.messages[messageId] = {
+        id: messageId,
+        legacyId: shortId,
+        timestamp: Date.now(),
+        monthKey: new Date().toISOString().substring(0, 7),
+      };
+    }
+    state.messages[messageId].transcription = transcriptionData;
+    writeArchiveStateFile(stateFile, state);
+    injectTranscriptionIntoMarkdown(paths, messageId, transcriptionData);
+
+    sendProgress({ status: 'Updating archive note...', progress: 92, phase: 'archive' });
+    if (isTelegram) {
+      await telegramClient.archiveChat(chatId, vaultPath);
+    } else {
+      let msg = null;
+      try {
+        const msgs = await whatsappClient.getChatById(chatId).then((c) => c.fetchMessages({ limit: 100 }));
+        msg = msgs.find((m) => (m.id?._serialized || m.id?.id) === messageId);
+      } catch (error) {
+        console.warn('Could not fetch message for transcription re-render:', error);
+      }
+      if (msg) {
+        await archiveChat(whatsappClient, chatId, vaultPath, mainWindow, {
+          singleMessage: msg,
+          profileName: activeProfile.name,
+          platform: 'whatsapp',
+        });
+      } else {
+        await repairArchiveOrder(whatsappClient, chatId, vaultPath, mainWindow, {
+          profileName: activeProfile.name,
+          platform: 'whatsapp',
+        });
+      }
+    }
+
+    sendProgress({ status: 'Transcription complete.', progress: 100, phase: 'complete' });
+    return { success: true, transcription: transcriptionData };
+  } catch (error) {
+    console.error('Transcription scan failed:', error);
+    sendProgress({ status: error.message || 'Transcription failed.', progress: 100, phase: 'error', error: error.message });
     return { success: false, error: error.message };
   }
 });

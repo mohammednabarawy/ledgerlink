@@ -196,9 +196,232 @@ function splitMarkdownBlocks(content) {
     .map(part => `${part}\n\n---\n`);
 }
 
+function getRecordAliases(record) {
+  const aliases = new Set([record.id]);
+  if (record.legacyId) aliases.add(record.legacyId);
+  const waMatch = record.block?.match(/<!--\s*wa:id:\s*([^>]+?)\s*-->/);
+  const shortMatch = record.block?.match(/<!--\s*id:\s*([^>]+?)\s*-->/);
+  if (waMatch?.[1]) aliases.add(waMatch[1].trim());
+  if (shortMatch?.[1]) aliases.add(shortMatch[1].trim());
+  return aliases;
+}
+
+function recordsOverlap(a, b) {
+  const aAliases = getRecordAliases(a);
+  return [...getRecordAliases(b)].some(alias => aAliases.has(alias));
+}
+
+const NOTE_LINE = (line = '') => `>${line ? ` ${line}` : ''}`;
+const NESTED_LINE = (line = '') => `> >${line ? ` ${line}` : ''}`;
+const OCR_LEGACY_RE = /(?:^|\n)(?:> >|>)\s*\[!receipt\][\s\S]*?(?:> >|>)\s*<\/details>\n?(?:> >|>)\n?/g;
+const OCR_BLOCK_RE = /(?:^|\n)> \*\*OCR Extracted\*\*[\s\S]*?(?=\n> \n> \*Tags:|\n<!--|\n---\n|$)/g;
+const TRANSCRIPT_LEGACY_RE = /(?:^|\n)(?:> >|>)\s*\[!transcript\][\s\S]*?(?=\n> \n> \*Tags:|\n> \n> <div dir=|\n<!--|\n---\n|$)/g;
+const TRANSCRIPT_BLOCK_RE = /(?:^|\n)> \*\*Transcription\*\*[\s\S]*?(?=\n> \n> \*Tags:|\n<!--|\n---\n|$)/g;
+
+function formatTagsFooter(tags) {
+  return `> \n> *Tags: ${tags}*\n`;
+}
+
+function extractTagsFromBlock(block) {
+  const divMatch = block.match(/> \n> <div dir="auto"[^>]*>Tags:\s*([^<]+)<\/div>/);
+  if (divMatch) return formatTagsFooter(divMatch[1].trim());
+  const mdMatch = block.match(/> \n> \*Tags:\s*([^*]+)\*/);
+  if (mdMatch) return formatTagsFooter(mdMatch[1].trim());
+  return formatTagsFooter('#sender/Unknown');
+}
+
+function stripMediaEnrichmentBlocks(middle) {
+  return middle
+    .replace(OCR_LEGACY_RE, '\n')
+    .replace(OCR_BLOCK_RE, '\n')
+    .replace(TRANSCRIPT_LEGACY_RE, '\n')
+    .replace(TRANSCRIPT_BLOCK_RE, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+}
+
+function normalizeBlockStyle(block) {
+  return block
+    .replace(/> \[!receipt\] \*\*OCR Extracted\*\* —/g, '> [!receipt] **OCR Extracted** -')
+    .replace(/> \[!transcript\] \*\*Transcription\*\* —/g, '> [!transcript] **Transcription** -')
+    .replace(/> \[!transcript\] \*\*Voice transcript\*\*/g, '> [!transcript] **Transcription**');
+}
+
+function attachmentWikiPath(relativePath, chatsDir) {
+  const normalized = String(relativePath || '').replace(/\\/g, '/');
+  if (!normalized) return normalized;
+  if (normalized.startsWith('../')) return normalized;
+  const archiveRoot = path.dirname(chatsDir);
+  const absolute = path.join(archiveRoot, normalized);
+  if (fs.existsSync(absolute)) return mediaEmbedPath(absolute, chatsDir);
+  if (/^(Media|Audio|Documents)\//.test(normalized)) return `../${normalized}`;
+  return normalized;
+}
+
+function findStateEntry(state, record) {
+  const aliases = getRecordAliases(record);
+  for (const [id, entry] of Object.entries(state?.messages || {})) {
+    const entryAliases = new Set([id, entry?.id, entry?.legacyId].filter(Boolean));
+    if ([...aliases].some((alias) => entryAliases.has(alias))) return entry;
+  }
+  return null;
+}
+
+function shouldSkipRedundantBody(body, mediaState) {
+  if (!body?.trim() || !mediaState?.filename) return false;
+  const trimmed = body.trim();
+  const filename = mediaState.filename;
+  if (trimmed === filename || trimmed === path.basename(filename)) return true;
+  if (/<attached:\s*[^>]+>/i.test(trimmed)) return true;
+  if (new RegExp(`${filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(file attached\\)`, 'i').test(trimmed)) return true;
+  return false;
+}
+
+function normalizeWikiPathInBlock(wikiPath, paths) {
+  if (wikiPath.startsWith('../')) return wikiPath;
+  const normalized = wikiPath.replace(/\\/g, '/');
+  const archiveRoot = paths.baseDir;
+  const direct = path.join(archiveRoot, normalized);
+  if (fs.existsSync(direct)) return mediaEmbedPath(direct, paths.chatsDir);
+  const basename = path.basename(normalized);
+  for (const folder of ['Media', 'Audio', 'Documents']) {
+    const candidate = path.join(archiveRoot, folder, basename);
+    if (fs.existsSync(candidate)) return mediaEmbedPath(candidate, paths.chatsDir);
+  }
+  if (/^(Media|Audio|Documents)\//.test(normalized)) return `../${normalized}`;
+  return wikiPath;
+}
+
+function fixMiddleEmbedPaths(middle, paths) {
+  return middle.replace(/^[> ]*!\[\[([^\]|]+)(\|[^\]]+)?\]\]/gm, (_full, wikiPath, sizeSuffix = '') => {
+    const fixed = normalizeWikiPathInBlock(wikiPath, paths);
+    return `> ![[${fixed}${sizeSuffix || ''}]]`;
+  });
+}
+
+function stripRedundantFilenameLine(middle) {
+  const lines = middle.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const embedMatch = line.match(/^> !\[\[(?:\.\.\/)?(?:Media|Audio|Documents)\/([^\]|]+)/);
+    if (embedMatch && i + 2 < lines.length && lines[i + 1] === '>' && lines[i + 2]?.startsWith('> ')) {
+      const filename = embedMatch[1];
+      const bodyText = lines[i + 2].slice(2).trim();
+      if (bodyText === filename || bodyText === decodeURIComponent(filename)) {
+        out.push(line, lines[i + 1]);
+        i += 2;
+        if (i + 1 < lines.length && lines[i + 1] === '>') i += 1;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+function normalizeQuoteLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return '>';
+  if (trimmed.startsWith('<!--')) return trimmed;
+  if (/^> >(\s|$)/.test(trimmed)) return trimmed;
+  const content = trimmed.replace(/^>+\s*/, '');
+  if (!content) return '>';
+  return `> ${content}`;
+}
+
+function ensureBlockquotePrefix(middle) {
+  return middle.split('\n').map((line) => normalizeQuoteLine(line)).join('\n');
+}
+
+function insertMediaCallouts(middle, ocrBlock, transcriptBlock) {
+  const callouts = `${ocrBlock}${transcriptBlock}`;
+  if (!callouts) return middle;
+  const embedIdx = middle.search(/^> ?!\[\[[^\]]+\]\]/m);
+  if (embedIdx === -1) return `${middle}${middle.endsWith('\n') ? '' : '\n'}${callouts}`;
+  const afterEmbed = middle.slice(embedIdx);
+  const embedBlockMatch = afterEmbed.match(/^> ?!\[\[[^\]]+\]\]\n(?:>\n)?/);
+  let insertAt = embedIdx + (embedBlockMatch?.[0]?.length || 0);
+  let prefix = middle.slice(0, insertAt);
+  if (!prefix.endsWith('>\n')) prefix += '>\n';
+  return `${prefix}${callouts}${middle.slice(insertAt)}`;
+}
+
+function rebuildRecordBlock(record, stateEntry, paths) {
+  let block = normalizeBlockStyle(record.block);
+  const headerMatch = block.match(/^> \[!note\][^\n]*\n>\n/);
+  if (!headerMatch) return block;
+
+  const header = headerMatch[0];
+  const tags = extractTagsFromBlock(block);
+  const commentsMatch = block.match(/\n(<!--[\s\S]*?)\n\n---\n$/);
+  const comments = commentsMatch?.[1] || '';
+
+  let middle = block.slice(header.length);
+  const tagsIndex = middle.search(/\n> \n> (?:<div dir="auto"|\*Tags:)/);
+  if (tagsIndex !== -1) middle = middle.slice(0, tagsIndex);
+  middle = stripMediaEnrichmentBlocks(middle);
+  middle = fixMiddleEmbedPaths(middle, paths);
+  middle = stripRedundantFilenameLine(middle);
+  middle = ensureBlockquotePrefix(middle);
+
+  const ocrBlock = stateEntry?.ocr ? formatOcrCalloutBlock(stateEntry.ocr, paths.chatsDir) : '';
+  const transcriptBlock = stateEntry?.transcription?.text
+    ? formatTranscriptionCalloutBlock(stateEntry.transcription, paths.chatsDir)
+    : '';
+  middle = insertMediaCallouts(middle, ocrBlock, transcriptBlock);
+  middle = ensureBlockquotePrefix(middle);
+
+  if (middle && !middle.endsWith('\n')) middle += '\n';
+  return `${header}${middle}${tags}\n${comments}\n\n---\n`;
+}
+
+export function normalizeArchiveStyles(paths, mainWindow = null) {
+  const state = readState(paths.stateFile);
+  const records = readExistingRecords(paths.chatsDir);
+  const changedIds = new Set();
+  const normalized = records.map((record) => {
+    const stateEntry = findStateEntry(state, record);
+    const rebuilt = rebuildRecordBlock(record, stateEntry, paths);
+    if (rebuilt !== record.block) {
+      changedIds.add(record.id);
+      return { ...record, block: rebuilt };
+    }
+    return record;
+  });
+
+  const touchedMonths = changedIds.size
+    ? writeRecordsToMonthFiles(paths.chatsDir, normalized, changedIds)
+    : [];
+
+  sendProgress(mainWindow, `Style normalization complete (${changedIds.size} messages updated).`, 100);
+  return { success: true, updated: changedIds.size, touchedMonths };
+}
+
+function dedupeExistingRecords(records) {
+  const kept = [];
+  for (const record of records) {
+    const normalized = { ...record, block: normalizeBlockStyle(record.block) };
+    const overlapIndex = kept.findIndex((entry) => recordsOverlap(entry, normalized));
+    if (overlapIndex === -1) {
+      kept.push(normalized);
+      continue;
+    }
+    const existing = kept[overlapIndex];
+    const preferNew = (
+      (normalized.source === 'live' && existing.source !== 'live')
+      || (normalized.block.includes('<!-- wa:id:') && !existing.block.includes('<!-- wa:id:'))
+      || normalized.block.length > existing.block.length
+    );
+    kept[overlapIndex] = preferNew ? normalized : existing;
+  }
+  return kept;
+}
+
 function extractBlockMetadata(block, fileMonthKey) {
   const waTimestamp = block.match(/<!--\s*wa:timestamp:\s*(\d+)\s*-->/);
-  const legacyId = block.match(/<!--\s*id:\s*([^>]+?)\s*-->/);
+  const waId = block.match(/<!--\s*wa:id:\s*([^>]+?)\s*-->/);
+  const legacyShortId = block.match(/<!--\s*id:\s*([^>]+?)\s*-->/);
   const importedId = block.match(/<!--\s*imported id:\s*([^>]+?)\s*-->/);
   const header = block.match(/^> \[!note\].*? - \*([^*]+)\*/m);
   const parsed = header ? parseDisplayStamp(header[1], fileMonthKey) : null;
@@ -206,18 +429,20 @@ function extractBlockMetadata(block, fileMonthKey) {
   const isImported = block.includes('#imported') || block.includes('<!-- imported');
   const sender = block.match(/^> \[!note\]\s+(?:!\[\[[^\]]+\]\]\s+)?\*\*(.*?)\*\*/m)?.[1] || '';
   const body = block
-    .split(/\n> <div dir=/)[0]
+    .split(/\n> \n> (?:<div dir=|\*Tags:)/)[0]
     .replace(/^> \[!note\].*\n>\n?/m, '')
     .split('\n')
     .map(line => line.replace(/^> ?/, ''))
     .join('\n')
     .trim();
-  const id = legacyId?.[1]?.trim()
+  const id = waId?.[1]?.trim()
+    || legacyShortId?.[1]?.trim()
     || importedId?.[1]?.trim()
     || (isImported ? `imported:${hashText(`${timestamp || fileMonthKey}|${sender}|${body}`)}` : `legacy:${hashText(block)}`);
 
   return {
     id,
+    legacyId: legacyShortId?.[1]?.trim() || null,
     source: isImported ? 'imported' : 'live',
     timestamp: timestamp || Number.MAX_SAFE_INTEGER,
     monthKey: timestamp ? monthKeyFromDate(new Date(timestamp)) : fileMonthKey,
@@ -237,7 +462,7 @@ function readExistingRecords(chatsDir) {
       records.push(extractBlockMetadata(block, fileMonthKey));
     }
   }
-  return records;
+  return dedupeExistingRecords(records);
 }
 
 function writeRecordsToMonthFiles(chatsDir, records, changedIds = null) {
@@ -282,8 +507,65 @@ function writeRecordsToMonthFiles(chatsDir, records, changedIds = null) {
 function mergeRecords(existingRecords, newRecords) {
   const map = new Map();
   for (const record of existingRecords) map.set(record.id, record);
-  for (const record of newRecords) map.set(record.id, record);
+
+  for (const record of newRecords) {
+    for (const [existingId, existing] of [...map.entries()]) {
+      if (recordsOverlap(existing, record)) map.delete(existingId);
+    }
+    map.set(record.id, record);
+  }
+
   return [...map.values()];
+}
+
+export function formatOcrCalloutBlock(ocrData, chatsDir = null) {
+  const confidence = Math.round(Number(ocrData.confidence) || 0);
+  const lines = [
+    NOTE_LINE(`**OCR Extracted** — Confidence: ${confidence}%`),
+  ];
+  if (ocrData.imageFile) {
+    const imagePath = chatsDir
+      ? attachmentWikiPath(ocrData.imageFile, chatsDir)
+      : ocrData.imageFile.replace(/\\/g, '/');
+    lines.push(NOTE_LINE(`**Source:** ![[${imagePath}]]`));
+  }
+  if (ocrData.vendor) lines.push(NOTE_LINE(`**Vendor:** ${ocrData.vendor}`));
+  if (ocrData.date) lines.push(NOTE_LINE(`**Date:** ${ocrData.date}`));
+  if (ocrData.total) lines.push(NOTE_LINE(`**Total:** ${ocrData.currency || 'SAR'} ${ocrData.total}`));
+  if (ocrData.tax) lines.push(NOTE_LINE(`**VAT/Tax:** ${ocrData.currency || 'SAR'} ${ocrData.tax}`));
+  const ocrText = String(ocrData.text || '').trim();
+  if (ocrText) {
+    lines.push(NOTE_LINE());
+    lines.push(NESTED_LINE('[!abstract]- Full OCR Text'));
+    for (const line of ocrText.split('\n')) {
+      lines.push(NESTED_LINE(line));
+    }
+  }
+  lines.push(NOTE_LINE());
+  return `${lines.join('\n')}\n`;
+}
+
+export function formatTranscriptionCalloutBlock(transcriptionData, chatsDir = null) {
+  const confidence = Math.round(Number(transcriptionData.confidence) || 0);
+  const lines = [
+    NOTE_LINE(`**Transcription** — Confidence: ${confidence}%`),
+  ];
+  if (transcriptionData.sourceFile) {
+    const sourcePath = chatsDir
+      ? attachmentWikiPath(transcriptionData.sourceFile, chatsDir)
+      : transcriptionData.sourceFile.replace(/\\/g, '/');
+    lines.push(NOTE_LINE(`**Source:** ![[${sourcePath}]]`));
+  }
+  const transcriptText = String(transcriptionData.text || '').trim();
+  if (transcriptText) {
+    lines.push(NOTE_LINE());
+    lines.push(NESTED_LINE('[!quote]- Transcript'));
+    for (const line of transcriptText.split('\n')) {
+      lines.push(NESTED_LINE(line));
+    }
+  }
+  lines.push(NOTE_LINE());
+  return `${lines.join('\n')}\n`;
 }
 
 async function getSenderInfo(client, msg, paths, contactCache) {
@@ -335,7 +617,7 @@ function mediaEmbedPath(filePath, chatsDir) {
   return relative.startsWith('..') ? relative : path.basename(filePath);
 }
 
-async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = null) {
+async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = null, existingTranscription = null) {
   const messageId = msg.id?._serialized || msg.id?.id;
   const shortId = msg.id?.id || messageId;
   const date = new Date(msg.timestamp * 1000);
@@ -392,21 +674,14 @@ async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = 
   }
 
   if (existingOcr) {
-    block += `> [!receipt] **OCR Extracted** — Confidence: ${existingOcr.confidence}%\n`;
-    if (existingOcr.imageFile) {
-      block += `> **Source attachment:** ![[${existingOcr.imageFile.replace(/\\/g, '/')}]]\n`;
-    }
-    if (existingOcr.vendor) block += `> **Vendor:** ${existingOcr.vendor}\n`;
-    if (existingOcr.date) block += `> **Date:** ${existingOcr.date}\n`;
-    if (existingOcr.total) block += `> **Total:** ${existingOcr.currency || 'SAR'} ${existingOcr.total}\n`;
-    if (existingOcr.tax) block += `> **VAT/Tax:** ${existingOcr.currency || 'SAR'} ${existingOcr.tax}\n`;
-    block += `>\n`;
-    block += `> <details><summary>Full OCR Text</summary>\n>\n`;
-    block += `${existingOcr.text.split('\n').map(line => `> ${line}`).join('\n')}\n`;
-    block += `> \n> </details>\n>\n`;
+    block += formatOcrCalloutBlock(existingOcr, paths.chatsDir);
   }
 
-  if (msg.body && msg.type !== 'poll_creation' && msg.type !== 'reaction') {
+  if (existingTranscription?.text) {
+    block += formatTranscriptionCalloutBlock(existingTranscription, paths.chatsDir);
+  }
+
+  if (msg.body && !shouldSkipRedundantBody(msg.body, mediaState) && msg.type !== 'poll_creation' && msg.type !== 'reaction') {
     block += `${msg.body.split('\n').map(line => `> ${line}`).join('\n')}\n>\n`;
   }
 
@@ -421,7 +696,8 @@ async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = 
       if (!isNaN(parsedTotal)) tags += ` #amount/${Math.round(parsedTotal)}`;
     }
   }
-  block += `> \n> <div dir="auto" style="margin-top: 8px; font-size: 0.85em; color: var(--text-muted);">${tags}</div>\n`;
+  if (existingTranscription?.text) tags += ` #transcription`;
+  block += formatTagsFooter(tags.replace(/^Tags:\s*/i, ''));
   block += `<!-- id: ${shortId} -->\n<!-- wa:id: ${messageId} -->\n<!-- wa:timestamp: ${timestamp} -->\n\n---\n`;
 
   return {
@@ -499,8 +775,8 @@ function renderImportedRecord(rawMessage, date, dateOrder, txtFilePath, paths) {
     if (fs.existsSync(sourcePath)) {
       const destPath = path.join(targetDir, filename);
       if (!fs.existsSync(destPath)) fs.copyFileSync(sourcePath, destPath);
-      block += `> ![[${filename}]]\n`;
-      block += `> ${filename.replace(/\.[^.]+$/, '')}\n>\n`;
+      const embedPath = mediaEmbedPath(destPath, paths.chatsDir);
+      block += `> ![[${embedPath}]]\n>\n`;
       attachmentFound = true;
     } else {
       block += `> *[Attachment not found: ${filename}]*\n>\n`;
@@ -518,7 +794,7 @@ function renderImportedRecord(rawMessage, date, dateOrder, txtFilePath, paths) {
   const timestamp = date.getTime();
   const id = `imported:${hashText(`${timestamp}|${rawMessage.sender}|${rawMessage.body}`)}`;
   const safeTag = safeName(rawMessage.sender, 'Unknown').replace(/\s/g, '_');
-  block += `> \n> <div dir="auto" style="margin-top: 8px; font-size: 0.85em; color: var(--text-muted);">Tags: #sender/${safeTag} #imported</div>\n`;
+  block += formatTagsFooter(`#sender/${safeTag} #imported`);
   block += `<!-- imported -->\n<!-- imported id: ${id} -->\n<!-- wa:timestamp: ${timestamp} -->\n<!-- wa:date-order: ${dateOrder} -->\n\n---\n`;
 
   return {
@@ -551,7 +827,10 @@ export async function archiveChat(client, chatId, vaultPath, mainWindow, options
       messages = await chat.fetchMessages({ limit: MAX_FETCH_LIMIT });
     }
     const existingRecords = readExistingRecords(paths.chatsDir);
-    const existingLiveIds = new Set(existingRecords.filter(record => record.source === 'live').map(record => record.id));
+    const existingLiveAliases = new Set();
+    for (const record of existingRecords.filter((entry) => entry.source === 'live')) {
+      for (const alias of getRecordAliases(record)) existingLiveAliases.add(alias);
+    }
     const contactCache = new Map();
     const newRecords = [];
     const changedIds = new Set();
@@ -566,21 +845,21 @@ export async function archiveChat(client, chatId, vaultPath, mainWindow, options
       }
       const msgId = msg.id?._serialized || msg.id?.id;
       const existingOcr = state.messages[msgId]?.ocr || null;
-      
-      const record = await renderLiveRecord(client, msg, paths, contactCache, existingOcr);
+      const existingTranscription = state.messages[msgId]?.transcription || null;
+
+      const record = await renderLiveRecord(client, msg, paths, contactCache, existingOcr, existingTranscription);
       newRecords.push(record);
       state.messages[record.id] = {
         ...record.state,
-        ocr: existingOcr
+        ocr: existingOcr,
+        transcription: existingTranscription,
       };
-      if (!existingLiveIds.has(record.id)) newMessagesAdded++;
+      const isNew = ![...getRecordAliases(record)].some((alias) => existingLiveAliases.has(alias));
+      if (isNew) newMessagesAdded++;
       changedIds.add(record.id);
     }
 
-    const merged = mergeRecords(
-      existingRecords.filter(record => !newRecords.some(newRecord => newRecord.id === record.id)),
-      newRecords,
-    );
+    const merged = mergeRecords(existingRecords, newRecords);
     const touchedMonths = writeRecordsToMonthFiles(paths.chatsDir, merged, changedIds);
 
     const processedIds = new Set([...(state.processedIds || [])]);
@@ -612,7 +891,9 @@ export async function repairArchiveOrder(client, chatId, vaultPath, mainWindow, 
     }
     if (fs.existsSync(paths.stateFile)) fs.copyFileSync(paths.stateFile, path.join(backupDir, 'archive_state.json'));
     const result = await archiveChat(client, chatId, vaultPath, mainWindow, options);
-    return { ...result, backupDir };
+    sendProgress(mainWindow, 'Normalizing archive styles...', 95);
+    const styleResult = normalizeArchiveStyles(paths, mainWindow);
+    return { ...result, ...styleResult, backupDir };
   } catch (error) {
     console.error('Repair failed', error);
     mainWindow?.webContents?.send('archive:error', error.message);
@@ -723,6 +1004,7 @@ export async function getChatMessages(client, chatId, options = {}) {
     if (!contactCache.has(senderName)) contactCache.set(senderName, true);
     
     const ocr = state.messages?.[id]?.ocr || null;
+    const transcription = state.messages?.[id]?.transcription || null;
 
     return {
       id,
@@ -735,6 +1017,7 @@ export async function getChatMessages(client, chatId, options = {}) {
       hasMedia: msg.hasMedia,
       hasQuotedMsg: msg.hasQuotedMsg,
       ocr,
+      transcription,
     };
   }));
 }

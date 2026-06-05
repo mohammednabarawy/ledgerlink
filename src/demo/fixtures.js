@@ -186,13 +186,17 @@ export const DEMO_LOCAL_CAPABILITIES = {
 };
 
 export const DEMO_BACKGROUND_OCR = {
-  status: 'idle',
+  status: 'running',
   progress: 68,
   done: 17,
   total: 25,
   failed: 0,
   documentPending: 2,
   documentDone: 5,
-  transcriptionPending: 1,
-  current: 'invoice_march_014.jpg',
+  transcriptionPending: 3,
+  transcriptionTotal: 4,
+  transcriptionDone: 1,
+  transcriptionFailed: 0,
+  phase: 'transcription',
+  current: 'voice_note_014.opus · transcribing',
 };

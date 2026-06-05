@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('api', {
   setWatcherChatEnabled: (chatId, vaultPath, enabled) => ipcRenderer.invoke('watcher:setChatEnabled', chatId, vaultPath, enabled),
   setWatcherGlobalEnabled: (enabled, vaultPath, platform) => ipcRenderer.invoke('watcher:setGlobalEnabled', enabled, vaultPath, platform),
   ocrScanMessage: (chatId, messageId, vaultPath) => ipcRenderer.invoke('ocr:scanMessage', chatId, messageId, vaultPath),
+  transcribeMessage: (chatId, messageId, vaultPath) => ipcRenderer.invoke('transcription:scanMessage', chatId, messageId, vaultPath),
   getBackgroundOCRStatus: (chatId) => ipcRenderer.invoke('ocr:getBackgroundStatus', chatId),
   startBackgroundOCRForChat: (chatId, vaultPath) => ipcRenderer.invoke('ocr:startBackgroundForChat', chatId, vaultPath),
   getLocalServiceCapabilities: () => ipcRenderer.invoke('services:getLocalCapabilities'),
@@ -86,6 +87,7 @@ contextBridge.exposeInMainWorld('api', {
   onArchiveProgress: (callback) => ipcRenderer.on('archive:progress', (_event, data) => callback(data)),
   onArchiveError: (callback) => ipcRenderer.on('archive:error', (_event, err) => callback(err)),
   onOCRProgress: (callback) => ipcRenderer.on('ocr:progress', (_event, data) => callback(data)),
+  onTranscriptionProgress: (callback) => ipcRenderer.on('transcription:progress', (_event, data) => callback(data)),
   onBackgroundOCRStatus: (callback) => ipcRenderer.on('ocr:backgroundStatus', (_event, data) => callback(data)),
   onWindowState: (callback) => ipcRenderer.on('window:state', (_event, data) => callback(data)),
   onModelDownloadProgress: (callback) => ipcRenderer.on('services:modelDownloadProgress', (_event, data) => callback(data)),
@@ -114,6 +116,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.removeAllListeners('archive:progress');
     ipcRenderer.removeAllListeners('archive:error');
     ipcRenderer.removeAllListeners('ocr:progress');
+    ipcRenderer.removeAllListeners('transcription:progress');
     ipcRenderer.removeAllListeners('ocr:backgroundStatus');
     ipcRenderer.removeAllListeners('window:state');
     ipcRenderer.removeAllListeners('services:modelDownloadProgress');
