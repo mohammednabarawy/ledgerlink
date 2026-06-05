@@ -1,9 +1,10 @@
-import { loadEnv } from './load-env.js';
+import { loadEnv, ensureUserEnvTemplate } from './load-env.js';
 loadEnv();
 
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeImage } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import fs from 'fs';
@@ -14,6 +15,7 @@ import { extractReceiptFields } from './ocr-extractor.js';
 import { detectDocumentOcrSupport, runDocumentOCR } from './document-ocr.js';
 import { detectTranscriptionStack, getDownloadedModels, downloadWhisperModel } from './transcription-service.js';
 import { TelegramArchiveClient } from './telegram-client.js';
+import { setTelegramCredentialsProvider } from './telegram-config.js';
 import { urlToDataUrl } from './account-avatars.js';
 import {
   initAvatarCache,
@@ -27,6 +29,35 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+
+function getWhatsAppPuppeteerOptions() {
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu',
+  ];
+
+  if (!app.isPackaged) {
+    return { headless: true, args };
+  }
+
+  try {
+    const puppeteer = require('puppeteer');
+    const executablePath = puppeteer.executablePath();
+    if (executablePath && fs.existsSync(executablePath)) {
+      return { headless: true, args, executablePath };
+    }
+  } catch (error) {
+    console.warn('Could not resolve puppeteer executable for packaged build:', error?.message || error);
+  }
+
+  return { headless: true, args };
+}
 
 let mainWindow;
 let whatsappClient;
@@ -145,7 +176,7 @@ function createWindow() {
     mainWindow.webContents.send('window:state', { maximized: false });
   });
 
-  const isDev = process.env.NODE_ENV === 'development';
+  const isDev = !app.isPackaged;
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
@@ -707,10 +738,7 @@ async function connectWhatsApp() {
     authStrategy: new LocalAuth({ 
       dataPath: path.join(app.getPath('userData'), authDataFolder) 
     }),
-    puppeteer: {
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    },
+    puppeteer: getWhatsAppPuppeteerOptions(),
   });
 
   whatsappClient.on('qr', (qr) => {
@@ -784,8 +812,13 @@ async function connectTelegram() {
 }
 
 app.whenReady().then(() => {
+  ensureUserEnvTemplate();
+  loadEnv();
+
   const userDataPath = app.getPath('userData');
   profileManager = new ProfileManager(userDataPath);
+  profileManager.migrateTelegramCredentialsFromEnv();
+  setTelegramCredentialsProvider(() => profileManager.getGlobalSettings().telegram);
   initAvatarCache(userDataPath);
 
   // Run vault migrations for all profile vaults if configured

@@ -2,7 +2,10 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { runOCR } from './ocr-engine.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PDF_EXTENSIONS = /\.(pdf)$/i;
 let rendererWindow = null;
@@ -21,8 +24,7 @@ function getRendererWindow() {
     }
   });
 
-  // Ensure path handles packed correctly if needed, for dev __dirname works
-  const htmlPath = path.join(process.cwd(), 'electron', 'pdf-renderer.html');
+  const htmlPath = path.join(__dirname, 'pdf-renderer.html');
   rendererWindow.loadFile(htmlPath);
   return rendererWindow;
 }

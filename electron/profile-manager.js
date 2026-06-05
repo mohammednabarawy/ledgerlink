@@ -25,6 +25,10 @@ export class ProfileManager {
         transcription: {
           modelSize: 'tiny'
         },
+        telegram: {
+          apiId: '',
+          apiHash: '',
+        },
         appearance: {
           theme: 'system'
         }
@@ -423,23 +427,46 @@ export class ProfileManager {
   }
 
   getGlobalSettings() {
-    return this.config.settings || { transcription: { modelSize: 'tiny' } };
+    const settings = this.config.settings || { transcription: { modelSize: 'tiny' } };
+    if (!settings.telegram) {
+      settings.telegram = { apiId: '', apiHash: '' };
+    }
+    return settings;
   }
 
   updateGlobalSettings(updates) {
     if (!this.config.settings) {
-      this.config.settings = { transcription: { modelSize: 'tiny' } };
+      this.config.settings = {
+        transcription: { modelSize: 'tiny' },
+        telegram: { apiId: '', apiHash: '' },
+      };
     }
-    
+
     if (updates.transcription) {
       this.config.settings.transcription = { ...this.config.settings.transcription, ...updates.transcription };
     }
-    
+
+    if (updates.telegram) {
+      this.config.settings.telegram = { ...this.config.settings.telegram, ...updates.telegram };
+    }
+
     if (updates.appearance) {
       this.config.settings.appearance = { ...this.config.settings.appearance, ...updates.appearance };
     }
 
     this.save();
     return this.config.settings;
+  }
+
+  migrateTelegramCredentialsFromEnv() {
+    const current = this.getGlobalSettings().telegram || {};
+    if (current.apiId && current.apiHash) return false;
+
+    const apiId = String(process.env.TELEGRAM_API_ID || '').trim();
+    const apiHash = String(process.env.TELEGRAM_API_HASH || '').trim();
+    if (!apiId || !apiHash) return false;
+
+    this.updateGlobalSettings({ telegram: { apiId, apiHash } });
+    return true;
   }
 }

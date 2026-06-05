@@ -24,7 +24,7 @@ export function resolveTelegramApiCredentials() {
   if (!apiId || !apiHash) {
     return {
       error:
-        'Telegram API credentials missing. Copy .env.example to .env in the project root and set TELEGRAM_API_ID and TELEGRAM_API_HASH from https://my.telegram.org/apps',
+        'Telegram API credentials missing. Open App Settings → Telegram and enter your own API ID and API Hash from https://my.telegram.org/apps',
     };
   }
 
@@ -34,9 +34,9 @@ export function resolveTelegramApiCredentials() {
 export function formatTelegramError(err) {
   const msg = err?.message || String(err);
   if (msg.includes('API_ID_INVALID')) {
-    return `Invalid Telegram API ID or API Hash. Check TELEGRAM_API_ID and TELEGRAM_API_HASH in your local .env file (${TELEGRAM_APPS_URL}).`;
+    return `Invalid Telegram API ID or API Hash. Open App Settings → Telegram and verify your credentials from ${TELEGRAM_APPS_URL}.`;
   }
-  if (msg.includes('credentials missing') || msg.includes('.env')) {
+  if (msg.includes('credentials missing') || msg.includes('App Settings')) {
     return msg;
   }
   return msg;

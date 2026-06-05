@@ -181,6 +181,8 @@ function App() {
   const [settingsOcrLanguage, setSettingsOcrLanguage] = useState('eng+ara');
   const [settingsOcrThreshold, setSettingsOcrThreshold] = useState(60);
   const [settingsOcrAutoScan, setSettingsOcrAutoScan] = useState(false);
+  const [settingsTelegramApiId, setSettingsTelegramApiId] = useState('');
+  const [settingsTelegramApiHash, setSettingsTelegramApiHash] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [editingProfile, setEditingProfile] = useState(null);
 
@@ -593,8 +595,10 @@ function App() {
     setSettingsOcrLanguage(activeProfile?.ocr?.language || 'eng+ara');
     setSettingsOcrThreshold(activeProfile?.ocr?.confidenceThreshold ?? 60);
     setSettingsOcrAutoScan(!!activeProfile?.ocr?.autoScan);
+    setSettingsTelegramApiId(globalSettings?.telegram?.apiId || '');
+    setSettingsTelegramApiHash(globalSettings?.telegram?.apiHash || '');
     setGlobalSettingsModalOpen(true);
-  }, [activeProfile, vaultPath]);
+  }, [activeProfile, vaultPath, globalSettings]);
 
   const handleSettingsVaultBrowse = async () => {
     if (!window.api || !activeProfile) return;
@@ -629,6 +633,29 @@ function App() {
       setSettingsSaving(false);
     }
   };
+
+  const handleSaveSettingsTelegram = async () => {
+    if (!window.api) return;
+    const apiId = settingsTelegramApiId.trim();
+    const apiHash = settingsTelegramApiHash.trim();
+    if (!apiId || !apiHash) return;
+
+    setSettingsSaving(true);
+    try {
+      const updated = await window.api.updateGlobalSettings({
+        telegram: { apiId, apiHash },
+      });
+      setGlobalSettings(updated);
+    } catch (err) {
+      console.error('Failed to save Telegram API settings:', err);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const telegramCredentialsConfigured = Boolean(
+    globalSettings?.telegram?.apiId?.trim() && globalSettings?.telegram?.apiHash?.trim(),
+  );
 
   const handleLogout = async (platform = activePlatform) => {
     if (platform === 'whatsapp') {
@@ -1197,6 +1224,20 @@ function App() {
                   </div>
                 )}
 
+                {!telegramCredentialsConfigured && (
+                  <div className="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 space-y-3">
+                    <p className="text-sm text-amber-100/90">{t('telegramApiRequired')}</p>
+                    <button
+                      type="button"
+                      onClick={() => openAppSettings('telegram')}
+                      className="toolbar-button w-full justify-center text-xs"
+                    >
+                      <Settings size={14} />
+                      {t('openTelegramSettings')}
+                    </button>
+                  </div>
+                )}
+
                 {tgStatus.state === 'STARTING' && (
                   <div className="empty-state py-4">
                     <Loader2 size={24} className="animate-spin text-emerald-300" />
@@ -1206,7 +1247,7 @@ function App() {
                 )}
 
                 {/* Step 1: Input Phone */}
-                {(tgStatus.state === 'DISCONNECTED' || tgStatus.state === 'NEED_PHONE') && (
+                {telegramCredentialsConfigured && (tgStatus.state === 'DISCONNECTED' || tgStatus.state === 'NEED_PHONE') && (
                   <form onSubmit={handleTelegramPhoneSubmit} className="space-y-4">
                     <div className="space-y-1">
                       <label className="text-xs text-slate-400">{t('phoneNumber')}</label>
@@ -1749,14 +1790,20 @@ function App() {
 
             <div className="flex flex-1 overflow-hidden h-[600px] max-h-[80vh]">
               <div className="w-48 bg-slate-900/50 border-r border-white/10 flex flex-col p-3 gap-1 overflow-y-auto shrink-0">
-                {(['vault', 'ocr', 'transcription']).map((tab) => (
+                {(['vault', 'ocr', 'transcription', 'telegram']).map((tab) => (
                   <button
                     key={tab}
                     type="button"
                     className={`px-3 py-2 text-left rounded-lg text-sm font-semibold transition-colors ${settingsTab === tab ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
                     onClick={() => setSettingsTab(tab)}
                   >
-                    {tab === 'vault' ? t('obsidianVault') : tab === 'ocr' ? t('ocrSettings') : t('settingsTranscription')}
+                    {tab === 'vault'
+                      ? t('obsidianVault')
+                      : tab === 'ocr'
+                        ? t('ocrSettings')
+                        : tab === 'transcription'
+                          ? t('settingsTranscription')
+                          : t('telegramApiCredentials')}
                   </button>
                 ))}
               </div>
@@ -1854,6 +1901,49 @@ function App() {
                         </button>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {settingsTab === 'telegram' && (
+                  <div className="space-y-6 max-w-2xl">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-100">{t('telegramApiCredentials')}</h3>
+                      <p className="text-slate-400 text-sm mt-1">{t('settingsTelegramDesc')}</p>
+                    </div>
+
+                    <div className="surface-card p-5 space-y-4">
+                      <p className="text-xs text-slate-500 leading-relaxed">{t('telegramApiHint')}</p>
+                      <div className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-200">{t('telegramApiId')}</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={settingsTelegramApiId}
+                          onChange={(e) => setSettingsTelegramApiId(e.target.value)}
+                          placeholder="12345678"
+                          className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-200">{t('telegramApiHash')}</label>
+                        <input
+                          type="password"
+                          value={settingsTelegramApiHash}
+                          onChange={(e) => setSettingsTelegramApiHash(e.target.value)}
+                          placeholder="abcdef1234567890abcdef1234567890"
+                          className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveSettingsTelegram}
+                        disabled={settingsSaving || !settingsTelegramApiId.trim() || !settingsTelegramApiHash.trim()}
+                        className="primary-command w-full sm:w-auto disabled:opacity-50"
+                      >
+                        {settingsSaving ? <Loader2 size={16} className="animate-spin" /> : null}
+                        {t('save')}
+                      </button>
+                    </div>
                   </div>
                 )}
 

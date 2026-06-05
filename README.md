@@ -17,23 +17,13 @@ LedgerLink is a professional-grade desktop application built with Electron, Reac
 - **Styling**: Tailwind CSS
 - **Icons**: Lucide React
 
-## Secrets and Telegram API
+## Telegram API credentials
 
-Telegram requires an `api_id` and `api_hash` from [my.telegram.org/apps](https://my.telegram.org/apps). These are **never** stored in git or in profile files on disk.
+Telegram requires each user to register their own `api_id` and `api_hash` at [my.telegram.org/apps](https://my.telegram.org/apps). These identify the **app install** to Telegram — they do **not** share your chats with other users. You still sign in with your own phone number.
 
-1. Copy the example env file:
-   ```bash
-   cp .env.example .env
-   ```
-   On Windows (PowerShell): `Copy-Item .env.example .env`
+In LedgerLink, open **App Settings → Telegram** (gear icon in the title bar) and paste your credentials there. They are stored locally in your user data folder, never in the shipped app or git.
 
-2. Edit `.env` and set:
-   ```
-   TELEGRAM_API_ID=your_api_id
-   TELEGRAM_API_HASH=your_api_hash
-   ```
-
-`.env` is listed in `.gitignore`. Do not commit it. If credentials were ever pushed to a remote, rotate them at my.telegram.org.
+For local development only, you can optionally copy `.env.example` to `.env` as a fallback. Do not commit `.env`.
 
 ## Development
 

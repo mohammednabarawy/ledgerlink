@@ -1,8 +1,14 @@
 import { spawn } from 'child_process';
+import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import https from 'https';
+import { app } from 'electron';
+import { findExistingWhisperCli, listWhisperCliCandidates } from './app-paths.js';
+
+const require = createRequire(import.meta.url);
+const bundledFfmpeg = require('ffmpeg-static');
 
 const MODELS = {
   'tiny': 'ggml-tiny.bin',
@@ -160,18 +166,22 @@ export async function detectWhisperCpp(userDataPath, profileModelSize) {
     configured ? { command: configured, prefix: [] } : null,
   ];
 
-  if (process.platform === 'win32') {
-    if (hardware.hasNvidia) {
-      candidates.push({ command: path.join(process.cwd(), 'tools', 'whisper.cpp', 'gpu', 'whisper-cli.exe'), prefix: [] });
-    }
-    candidates.push({ command: path.join(process.cwd(), 'tools', 'whisper.cpp', 'cpu', 'whisper-cli.exe'), prefix: [] });
+  const bundledGpu = findExistingWhisperCli(true);
+  const bundledCpu = findExistingWhisperCli(false);
+  if (hardware.hasNvidia && bundledGpu) {
+    candidates.push({ command: bundledGpu, prefix: [] });
+  }
+  if (bundledCpu) {
+    candidates.push({ command: bundledCpu, prefix: [] });
+  }
+
+  for (const command of listWhisperCliCandidates(false)) {
+    candidates.push({ command, prefix: [] });
   }
 
   candidates.push(
     { command: 'whisper-cli', prefix: [] },
     { command: 'whisper.cpp', prefix: [] },
-    { command: path.join(process.cwd(), 'tools', 'whisper.cpp', 'whisper-cli.exe'), prefix: [] },
-    { command: path.join(process.cwd(), 'tools', 'whisper.cpp', 'main.exe'), prefix: [] }
   );
   candidates = candidates.filter(Boolean);
   
@@ -224,8 +234,9 @@ export async function detectTranscriptionStack(userDataPath, profileModelSize) {
 
 export async function extractAudio(inputPath, tempRoot) {
   const ffmpegCandidates = [
-    { command: 'ffmpeg', prefix: ['-y'] }
-  ];
+    bundledFfmpeg ? { command: bundledFfmpeg, prefix: ['-y'] } : null,
+    { command: 'ffmpeg', prefix: ['-y'] },
+  ].filter(Boolean);
   const ffmpeg = await findCommand(ffmpegCandidates, ['-version']);
   if (!ffmpeg) throw new Error('ffmpeg is required to process audio/video for transcription.');
 
