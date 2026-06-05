@@ -24,9 +24,9 @@
 LedgerLink is a desktop app that connects to **WhatsApp Web** and **Telegram**, lets you pick an **Obsidian vault**, and archives chats into clean monthly Markdown with linked media. It supports multiple local accounts, background watching, OCR, PDF scanning, and local voice/video transcription.
 
 <p align="center">
-  <img src="docs/screenshots/main-workspace.png" alt="LedgerLink main workspace — WhatsApp device linking screen" width="920" />
+  <img src="docs/screenshots/demo-workspace.png" alt="LedgerLink workspace with chat list, archive controls, and OCR backlog" width="960" />
   <br/>
-  <em>Main workspace — logged-out state (no personal chats shown)</em>
+  <em>Connected workspace with fictional demo data (see note below)</em>
 </p>
 
 ---
@@ -48,40 +48,47 @@ LedgerLink is a desktop app that connects to **WhatsApp Web** and **Telegram**, 
 
 ## Screenshots
 
-All screenshots were captured in a **logged-out, demo state** — no real chats, contacts, or credentials are visible.
+> **Privacy note:** README images use either a logged-out app state or **simulated demo data** (fictional names like *Alex Morgan*, *Accounts Payable Team*, placeholder API keys). No real chats, phone numbers, or credentials are shown.
 
-### Connected accounts & device linking
+### Getting started (before login)
 
-Switch between WhatsApp and Telegram from the sidebar. Link WhatsApp via QR or sign in to Telegram with your phone.
+| | |
+|:---:|:---:|
+| <img src="docs/screenshots/main-workspace.png" alt="WhatsApp QR linking" width="440" /><br/><sub>Link WhatsApp via QR</sub> | <img src="docs/screenshots/telegram-connect.png" alt="Telegram API setup prompt" width="440" /><br/><sub>Telegram — add API keys first</sub> |
+| <img src="docs/screenshots/account-menu.png" alt="Title bar account menu" width="440" /><br/><sub>Switch profiles from the title bar</sub> | <img src="docs/screenshots/app-settings-telegram.png" alt="Telegram API settings" width="440" /><br/><sub>App Settings → Telegram API</sub> |
+
+### Connected workspace
+
+Archive a chat, enable the watcher, and monitor OCR backlog — all from one panel.
 
 <p align="center">
-  <img src="docs/screenshots/telegram-connect.png" alt="Telegram connect screen with API setup prompt" width="920" />
+  <img src="docs/screenshots/demo-workspace.png" alt="WhatsApp connected — chat selected with archive success" width="960" />
 </p>
 
-### Title bar accounts
+<p align="center">
+  <img src="docs/screenshots/demo-telegram.png" alt="Telegram connected — channel selected" width="960" />
+</p>
 
-Create and switch profiles from the title bar without cluttering the sidebar.
+### Archive in progress
 
 <p align="center">
-  <img src="docs/screenshots/account-menu.png" alt="Title bar account menu" width="920" />
+  <img src="docs/screenshots/demo-archive-progress.png" alt="Archive progress bar while writing to Obsidian" width="960" />
+</p>
+
+### Chat review &amp; OCR
+
+Open the original message stream and extract text from receipt images.
+
+<p align="center">
+  <img src="docs/screenshots/demo-review.png" alt="Review modal with sample messages and OCR button" width="720" />
 </p>
 
 ### App Settings
 
-Vault path, OCR, transcription models, and Telegram API credentials — all in one place.
-
-<table>
-  <tr>
-    <td width="50%">
-      <img src="docs/screenshots/app-settings-vault.png" alt="App Settings — Obsidian vault tab" />
-      <br/><sub><b>Obsidian Vault</b> — per-account storage path</sub>
-    </td>
-    <td width="50%">
-      <img src="docs/screenshots/app-settings-telegram.png" alt="App Settings — Telegram API tab" />
-      <br/><sub><b>Telegram API</b> — your own api_id &amp; api_hash</sub>
-    </td>
-  </tr>
-</table>
+| | |
+|:---:|:---:|
+| <img src="docs/screenshots/app-settings-vault.png" alt="Vault settings tab" width="440" /><br/><sub>Obsidian vault path</sub> | <img src="docs/screenshots/demo-settings-ocr.png" alt="OCR settings tab" width="440" /><br/><sub>OCR language &amp; confidence</sub> |
+| <img src="docs/screenshots/demo-settings-transcription.png" alt="Whisper model downloads" width="440" /><br/><sub>Transcription models</sub> | |
 
 ---
 
@@ -143,6 +150,27 @@ npm run dev
 ```
 
 `npm run dev` starts Vite and Electron together. WhatsApp and Telegram require the full Electron shell (not the browser preview alone).
+
+### Screenshot demo mode
+
+For README/marketing captures without logging into real accounts, run Vite and open a demo scene:
+
+```bash
+npm run dev:vite
+```
+
+| URL query | Shows |
+|-----------|--------|
+| `?demo=workspace` | WhatsApp connected, chat selected, archive complete |
+| `?demo=telegram` | Telegram connected, channel selected |
+| `?demo=review` | Review modal with sample messages |
+| `?demo=archive-progress` | Archive progress at 62% |
+| `?demo=settings-ocr` | App Settings → OCR |
+| `?demo=settings-transcription` | App Settings → Whisper models |
+
+Example: `http://localhost:5173/?demo=workspace`
+
+Demo fixtures live in `src/demo/fixtures.js` — fictional names only.
 
 ### Build
 

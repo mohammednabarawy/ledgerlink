@@ -39,6 +39,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
+import { getDemoScene, getDemoBootstrap } from './demo/index.js';
 
 const chatFilters = ['all', 'groups', 'contacts', 'archived'];
 
@@ -161,28 +162,30 @@ function ChatIcon({ chat, className = '', messagingReady = true }) {
 function App() {
   const { lang, t, toggleLanguage } = useLanguage();
   const isRtl = lang === 'ar';
+  const demoScene = useMemo(() => getDemoScene(), []);
+  const demoBoot = useMemo(() => (demoScene ? getDemoBootstrap(demoScene) : null), [demoScene]);
 
   // Active messaging account in sidebar (whatsapp | telegram)
-  const [activePlatform, setActivePlatform] = useState('whatsapp');
+  const [activePlatform, setActivePlatform] = useState(demoBoot?.activePlatform ?? 'whatsapp');
   const activePlatformRef = useRef(activePlatform);
   activePlatformRef.current = activePlatform;
 
   // Profile States
-  const [profiles, setProfiles] = useState([]);
-  const [activeProfile, setActiveProfile] = useState(null);
+  const [profiles, setProfiles] = useState(demoBoot?.profiles ?? []);
+  const [activeProfile, setActiveProfile] = useState(demoBoot?.activeProfile ?? null);
   const [titlebarAccountOpen, setTitlebarAccountOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [globalSettingsModalOpen, setGlobalSettingsModalOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState('vault');
-  const [globalSettings, setGlobalSettings] = useState({ transcription: { modelSize: 'tiny' } });
-  const [downloadedModels, setDownloadedModels] = useState({});
+  const [globalSettingsModalOpen, setGlobalSettingsModalOpen] = useState(!!demoBoot?.globalSettingsModalOpen);
+  const [settingsTab, setSettingsTab] = useState(demoBoot?.settingsTab ?? 'vault');
+  const [globalSettings, setGlobalSettings] = useState(demoBoot?.globalSettings ?? { transcription: { modelSize: 'tiny' } });
+  const [downloadedModels, setDownloadedModels] = useState(demoBoot?.downloadedModels ?? {});
   const [modelDownloadProgress, setModelDownloadProgress] = useState(null);
-  const [settingsVaultPath, setSettingsVaultPath] = useState('');
-  const [settingsOcrLanguage, setSettingsOcrLanguage] = useState('eng+ara');
-  const [settingsOcrThreshold, setSettingsOcrThreshold] = useState(60);
-  const [settingsOcrAutoScan, setSettingsOcrAutoScan] = useState(false);
-  const [settingsTelegramApiId, setSettingsTelegramApiId] = useState('');
-  const [settingsTelegramApiHash, setSettingsTelegramApiHash] = useState('');
+  const [settingsVaultPath, setSettingsVaultPath] = useState(demoBoot?.settingsVaultPath ?? '');
+  const [settingsOcrLanguage, setSettingsOcrLanguage] = useState(demoBoot?.settingsOcrLanguage ?? 'eng+ara');
+  const [settingsOcrThreshold, setSettingsOcrThreshold] = useState(demoBoot?.settingsOcrThreshold ?? 60);
+  const [settingsOcrAutoScan, setSettingsOcrAutoScan] = useState(demoBoot?.settingsOcrAutoScan ?? false);
+  const [settingsTelegramApiId, setSettingsTelegramApiId] = useState(demoBoot?.settingsTelegramApiId ?? '');
+  const [settingsTelegramApiHash, setSettingsTelegramApiHash] = useState(demoBoot?.settingsTelegramApiHash ?? '');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [editingProfile, setEditingProfile] = useState(null);
 
@@ -191,20 +194,20 @@ function App() {
   const [profColor, setProfColor] = useState('#10b981');
 
   // Vault and WA States
-  const [vaultPath, setVaultPath] = useState(null);
+  const [vaultPath, setVaultPath] = useState(demoBoot?.vaultPath ?? null);
   const [qrCode, setQrCode] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // WhatsApp authenticated
-  const [accountInfo, setAccountInfo] = useState(null); // WhatsApp account info
-  const [chats, setChats] = useState([]);
-  const [selectedChat, setSelectedChat] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(demoBoot?.isAuthenticated ?? false);
+  const [accountInfo, setAccountInfo] = useState(demoBoot?.accountInfo ?? null);
+  const [chats, setChats] = useState(demoBoot?.chats ?? []);
+  const [selectedChat, setSelectedChat] = useState(demoBoot?.selectedChat ?? null);
   const [isLoadingChats, setIsLoadingChats] = useState(false);
   const [chatQuery, setChatQuery] = useState('');
   const [chatFilter, setChatFilter] = useState('all');
 
   // Telegram States
-  const [isTGAuthenticated, setIsTGAuthenticated] = useState(false);
-  const [tgAccountInfo, setTgAccountInfo] = useState(null);
-  const [tgStatus, setTgStatus] = useState({ state: 'DISCONNECTED' });
+  const [isTGAuthenticated, setIsTGAuthenticated] = useState(demoBoot?.isTGAuthenticated ?? false);
+  const [tgAccountInfo, setTgAccountInfo] = useState(demoBoot?.tgAccountInfo ?? null);
+  const [tgStatus, setTgStatus] = useState(demoBoot?.tgStatus ?? { state: 'DISCONNECTED' });
   const [tgError, setTgError] = useState(null);
   const [tgPhone, setTgPhone] = useState('');
   const [tgCode, setTgCode] = useState('');
@@ -213,28 +216,28 @@ function App() {
   const [tgChatListVersion, setTgChatListVersion] = useState(0);
 
   // Archiving States
-  const [isWorking, setIsWorking] = useState(false);
-  const [archiveProgress, setArchiveProgress] = useState(0);
-  const [archiveStatus, setArchiveStatus] = useState('');
+  const [isWorking, setIsWorking] = useState(demoBoot?.isWorking ?? false);
+  const [archiveProgress, setArchiveProgress] = useState(demoBoot?.archiveProgress ?? 0);
+  const [archiveStatus, setArchiveStatus] = useState(demoBoot?.archiveStatus ?? '');
   const [archiveError, setArchiveError] = useState(null);
-  const [lastResult, setLastResult] = useState(null);
+  const [lastResult, setLastResult] = useState(demoBoot?.lastResult ?? null);
 
   // OCR States
   const [ocrScanningMap, setOcrScanningMap] = useState({});
   const [ocrResultsMap, setOcrResultsMap] = useState({});
   const [ocrProgress, setOcrProgress] = useState(null);
-  const [backgroundOcrStatusMap, setBackgroundOcrStatusMap] = useState({});
-  const [localServiceCapabilities, setLocalServiceCapabilities] = useState(null);
+  const [backgroundOcrStatusMap, setBackgroundOcrStatusMap] = useState(demoBoot?.backgroundOcrStatusMap ?? {});
+  const [localServiceCapabilities, setLocalServiceCapabilities] = useState(demoBoot?.localServiceCapabilities ?? null);
   const ocrSettings = activeProfile?.ocr || {};
 
   // Watcher States
-  const [watcherStatus, setWatcherStatus] = useState({ globalEnabled: false, enabledChatIds: [] });
+  const [watcherStatus, setWatcherStatus] = useState(demoBoot?.watcherStatus ?? { globalEnabled: false, enabledChatIds: [] });
   const [watcherEvent, setWatcherEvent] = useState(null);
 
   // Review Modal States
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewMessages, setReviewMessages] = useState([]);
-  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(!!demoBoot?.reviewOpen);
+  const [reviewMessages, setReviewMessages] = useState(demoBoot?.reviewMessages ?? []);
+  const [reviewLoading, setReviewLoading] = useState(demoBoot?.reviewLoading ?? false);
   const [reviewError, setReviewError] = useState(null);
 
   // Layout States
@@ -244,7 +247,7 @@ function App() {
 
   // Load profiles list and active profile
   const loadProfiles = useCallback(async () => {
-    if (!window.api) return;
+    if (demoScene || !window.api) return;
     try {
       const active = await window.api.getActiveProfile();
       const list = await window.api.getProfiles();
@@ -258,10 +261,10 @@ function App() {
     } catch (e) {
       console.error('Failed to load profiles and settings:', e);
     }
-  }, []);
+  }, [demoScene]);
 
   const fetchChats = useCallback(async () => {
-    if (!window.api) return;
+    if (demoScene || !window.api) return;
     setIsLoadingChats(true);
     
     // First, load from local disk cache for instant display
@@ -294,7 +297,7 @@ function App() {
     } finally {
       setIsLoadingChats(false);
     }
-  }, [activePlatform, t]);
+  }, [activePlatform, t, demoScene]);
 
   // Handle WhatsApp connect/status checks
   const refreshWhatsAppAccount = useCallback(async () => {
@@ -387,23 +390,24 @@ function App() {
 
   // Initial load
   useEffect(() => {
+    if (demoScene) return;
     loadProfiles();
-  }, [loadProfiles]);
+  }, [loadProfiles, demoScene]);
 
   // Load chats when switching messaging account
   useEffect(() => {
-    if (!window.api) return;
+    if (demoScene || !window.api) return;
     window.api.getWatcherStatus?.(activePlatform).then(setWatcherStatus).catch(() => {});
     if (activePlatform === 'whatsapp' && isAuthenticated) {
       fetchChats();
     } else if (activePlatform === 'telegram' && isTGAuthenticated) {
       fetchChats();
     }
-  }, [activePlatform, isAuthenticated, isTGAuthenticated, fetchChats]);
+  }, [activePlatform, isAuthenticated, isTGAuthenticated, fetchChats, demoScene]);
 
   // Watch for profile or authentication adjustments
   useEffect(() => {
-    if (!window.api) return;
+    if (demoScene || !window.api) return;
 
     window.api.onQR((qr) => {
       setQrCode(qr);
@@ -527,14 +531,14 @@ function App() {
     });
 
     return () => window.api.removeListeners();
-  }, [fetchChats, activePlatform, refreshWhatsAppAccount, refreshTelegramAccount, t]);
+  }, [fetchChats, activePlatform, refreshWhatsAppAccount, refreshTelegramAccount, t, demoScene]);
 
   // Connect messaging accounts once profile is loaded
   useEffect(() => {
-    if (!activeProfile || !window.api) return;
+    if (demoScene || !activeProfile || !window.api) return;
     checkWAStatus();
     checkTGStatus();
-  }, [activeProfile, checkWAStatus, checkTGStatus]);
+  }, [activeProfile, checkWAStatus, checkTGStatus, demoScene]);
 
   const filteredChats = useMemo(() => {
     const query = chatQuery.trim().toLowerCase();
