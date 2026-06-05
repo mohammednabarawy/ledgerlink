@@ -3,7 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "description": "LedgerLink — archive WhatsApp and Telegram chats into Obsidian",
-  "author": "Mohamed <mohamednabarawy@gmail.com>",
+  "author": "Mohamed Elnabarawi <mohamednabarawy@gmail.com>",
+  "license": "MIT",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {

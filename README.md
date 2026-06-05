@@ -15,6 +15,9 @@
   </a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64" />
   <img src="https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License" />
+  </a>
 </p>
 
 ---
@@ -204,4 +207,25 @@ Nothing in the [release installer](https://github.com/mohammednabarawy/ledgerlin
 
 ## License
 
-Private project — see repository owner for terms.
+LedgerLink is released under the **[MIT License](LICENSE)**.
+
+Copyright (c) 2026 **Mohamed Elnabarawi**
+
+You are free to use, modify, and distribute this software, including commercially, provided the copyright notice and license text are included in all copies or substantial portions.
+
+---
+
+## Contributing
+
+Contributions are welcome — bug reports, docs, translations, and pull requests.
+
+Read **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup, PR guidelines, and privacy rules (no real chats or secrets in the repo).
+
+Quick start:
+
+```bash
+git clone https://github.com/mohammednabarawy/ledgerlink.git
+cd ledgerlink && npm install && npm run dev
+```
+
+Open an [issue](https://github.com/mohammednabarawy/ledgerlink/issues) or submit a PR on `main`. By contributing, you agree to license your work under [LICENSE](LICENSE).
