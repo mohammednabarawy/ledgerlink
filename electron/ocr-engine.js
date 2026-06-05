@@ -31,22 +31,27 @@ export async function preprocessImageForOCR(imagePath, options = {}) {
   }
 }
 
-export async function runOCR(imagePath, language = 'eng+ara') {
+export async function runOCR(imagePath, language = 'eng+ara', options = {}) {
+  const { onProgress } = options;
   const modelsPath = path.join(app.getPath('userData'), 'tesseract-models');
   if (!fs.existsSync(modelsPath)) {
     fs.mkdirSync(modelsPath, { recursive: true });
   }
 
+  let worker = null;
   try {
     // Pre-process the image to binarize and improve contrast
     const preprocessedBuffer = await preprocessImageForOCR(imagePath);
 
     // Initialize worker with languages (e.g. eng, ara, eng+ara)
-    const worker = await Tesseract.createWorker(language, 1, {
+    worker = await Tesseract.createWorker(language, 1, {
       cachePath: modelsPath,
       logger: m => {
-        if (m.status === 'recognizing text') {
-          // Log progress if needed
+        if (typeof onProgress === 'function') {
+          onProgress({
+            status: m.status,
+            progress: typeof m.progress === 'number' ? m.progress : null,
+          });
         }
       }
     });
@@ -58,6 +63,7 @@ export async function runOCR(imagePath, language = 'eng+ara') {
 
     const { data } = await worker.recognize(preprocessedBuffer);
     await worker.terminate();
+    worker = null;
 
     return {
       text: data.text || '',
@@ -69,6 +75,13 @@ export async function runOCR(imagePath, language = 'eng+ara') {
     };
   } catch (error) {
     console.error('OCR execution failed:', error);
+    if (worker) {
+      try {
+        await worker.terminate();
+      } catch {
+        // ignore cleanup failures
+      }
+    }
     throw error;
   }
 }

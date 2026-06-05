@@ -11,7 +11,7 @@ export default defineConfig({
   },
   server: {
     watch: {
-      ignored: ['**/WhatsApp Archive/**', '**/archive_state.json', '**/*.md']
+      ignored: ['**/.wwebjs_cache/**', '**/WhatsApp Archive/**', '**/Telegram Archive/**', '**/archive_state.json', '**/*.md']
     }
   }
 })

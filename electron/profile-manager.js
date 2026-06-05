@@ -16,14 +16,42 @@ export class ProfileManager {
   constructor(userDataPath) {
     this.userDataPath = userDataPath;
     this.profilesPath = path.join(userDataPath, 'profiles.json');
+    this.telegramSessionsDir = path.join(userDataPath, 'TelegramSessions');
     this.legacySettingsPath = path.join(userDataPath, 'archiver-settings.json');
     this.config = {
       schemaVersion: 1,
       activeProfileId: 'default',
+      settings: {
+        transcription: {
+          modelSize: 'tiny'
+        },
+        appearance: {
+          theme: 'system'
+        }
+      },
       profiles: {}
     };
     this.load();
+    this.migrateTelegramSessions();
     this.sanitizeStoredSecrets();
+  }
+
+  telegramSessionPath(profileId = this.config.activeProfileId) {
+    return path.join(this.telegramSessionsDir, `${safeName(profileId, 'default')}.session`);
+  }
+
+  migrateTelegramSessions() {
+    fs.mkdirSync(this.telegramSessionsDir, { recursive: true });
+    let changed = false;
+    for (const [id, profile] of Object.entries(this.config.profiles)) {
+      const session = profile?.telegram?.session;
+      if (session && String(session).length > 0) {
+        fs.writeFileSync(this.telegramSessionPath(id), String(session), 'utf8');
+        delete profile.telegram.session;
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   sanitizeStoredSecrets() {
@@ -237,6 +265,42 @@ export class ProfileManager {
     return profile ? stripTelegramSecretsFromProfile(profile) : profile;
   }
 
+  getActiveProfileId() {
+    return this.config.activeProfileId;
+  }
+
+  /** Persist Telegram auth session on the stored profile (not a stripped copy). */
+  setTelegramSession(session, enabled = true) {
+    const id = this.config.activeProfileId;
+    const profile = this.config.profiles[id];
+    if (!profile) return null;
+    if (!profile.telegram) profile.telegram = { watcher: { globalEnabled: false, enabledChatIds: [] } };
+    fs.mkdirSync(this.telegramSessionsDir, { recursive: true });
+    const sessionPath = this.telegramSessionPath(id);
+    if (session) {
+      fs.writeFileSync(sessionPath, String(session), 'utf8');
+    } else if (fs.existsSync(sessionPath)) {
+      fs.unlinkSync(sessionPath);
+    }
+    delete profile.telegram.session;
+    profile.telegram.enabled = !!enabled;
+    this.save();
+    return stripTelegramSecretsFromProfile(profile);
+  }
+
+  getTelegramSession(profileId = this.config.activeProfileId) {
+    const filePath = this.telegramSessionPath(profileId);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf8').trim();
+    }
+    const profileSession = this.config.profiles[profileId]?.telegram?.session;
+    return profileSession ? String(profileSession) : '';
+  }
+
+  hasTelegramSession(profileId = this.config.activeProfileId) {
+    return this.getTelegramSession(profileId).length > 0;
+  }
+
   listProfiles() {
     return Object.values(this.config.profiles).map(stripTelegramSecretsFromProfile);
   }
@@ -302,7 +366,9 @@ export class ProfileManager {
     }
     
     if (updates.telegram) {
-      const { apiId, apiHash, ...telegramUpdates } = updates.telegram;
+      const telegramUpdates = { ...updates.telegram };
+      delete telegramUpdates.apiId;
+      delete telegramUpdates.apiHash;
       profile.telegram = { ...profile.telegram, ...telegramUpdates };
       if (updates.telegram.watcher) {
         profile.telegram.watcher = { ...profile.telegram.watcher, ...updates.telegram.watcher };
@@ -332,6 +398,15 @@ export class ProfileManager {
       }
     }
 
+    const telegramSessionPath = this.telegramSessionPath(id);
+    if (fs.existsSync(telegramSessionPath)) {
+      try {
+        fs.unlinkSync(telegramSessionPath);
+      } catch (err) {
+        console.error(`Failed to delete Telegram session for profile ${id}:`, err);
+      }
+    }
+
     delete this.config.profiles[id];
     if (this.config.activeProfileId === id) {
       this.config.activeProfileId = 'default';
@@ -345,5 +420,26 @@ export class ProfileManager {
     this.config.activeProfileId = id;
     this.save();
     return this.config.profiles[id];
+  }
+
+  getGlobalSettings() {
+    return this.config.settings || { transcription: { modelSize: 'tiny' } };
+  }
+
+  updateGlobalSettings(updates) {
+    if (!this.config.settings) {
+      this.config.settings = { transcription: { modelSize: 'tiny' } };
+    }
+    
+    if (updates.transcription) {
+      this.config.settings.transcription = { ...this.config.settings.transcription, ...updates.transcription };
+    }
+    
+    if (updates.appearance) {
+      this.config.settings.appearance = { ...this.config.settings.appearance, ...updates.appearance };
+    }
+
+    this.save();
+    return this.config.settings;
   }
 }

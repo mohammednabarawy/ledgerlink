@@ -6,6 +6,9 @@ const ARCHIVE_SCHEMA_VERSION = 3;
 const MAX_FETCH_LIMIT = 999999;
 
 function sendProgress(mainWindow, status, progress, detail = {}) {
+  if (mainWindow?.setProgressBar) {
+    mainWindow.setProgressBar(progress > 0 && progress < 100 ? progress / 100 : -1);
+  }
   mainWindow?.webContents?.send('archive:progress', { status, progress, ...detail });
 }
 
@@ -284,7 +287,9 @@ function mergeRecords(existingRecords, newRecords) {
 }
 
 async function getSenderInfo(client, msg, paths, contactCache) {
-  const senderId = msg.fromMe ? client.info?.wid?._serialized : (msg.author || msg.from);
+  const senderId = msg.fromMe
+    ? (client.info?.wid?._serialized || 'me')
+    : (msg.author || msg.from);
   if (contactCache.has(senderId)) return contactCache.get(senderId);
 
   let name;
@@ -292,19 +297,21 @@ async function getSenderInfo(client, msg, paths, contactCache) {
   try {
     const contact = await msg.getContact();
     name = msg.fromMe ? 'Me' : (contact.name || contact.pushname || contact.shortName || contact.number || senderId);
-    try {
-      const picUrl = await contact.getProfilePicUrl();
-      if (picUrl) {
-        const response = await fetch(picUrl);
-        const avatarPathId = String(senderId).replace(/[^a-zA-Z0-9]/g, '');
-        avatarFile = `avatar_${avatarPathId}.jpg`;
-        const avatarPath = path.join(paths.avatarsDir, avatarFile);
-        if (!fs.existsSync(avatarPath)) {
-          fs.writeFileSync(avatarPath, Buffer.from(await response.arrayBuffer()));
+    if (typeof contact.getProfilePicUrl === 'function') {
+      try {
+        const picUrl = await contact.getProfilePicUrl();
+        if (picUrl) {
+          const response = await fetch(picUrl);
+          const avatarPathId = String(senderId).replace(/[^a-zA-Z0-9]/g, '');
+          avatarFile = `avatar_${avatarPathId}.jpg`;
+          const avatarPath = path.join(paths.avatarsDir, avatarFile);
+          if (!fs.existsSync(avatarPath)) {
+            fs.writeFileSync(avatarPath, Buffer.from(await response.arrayBuffer()));
+          }
         }
+      } catch {
+        // Profile pictures can be blocked by privacy settings.
       }
-    } catch {
-      // Profile pictures can be blocked by privacy settings.
     }
   } catch {
     // Use fallback below.
@@ -316,10 +323,16 @@ async function getSenderInfo(client, msg, paths, contactCache) {
   return info;
 }
 
-function mediaTargetDir(mimetype, paths) {
-  if (mimetype?.startsWith('audio/')) return paths.audioDir;
+function mediaTargetDir(mimetype, paths, msgType = null) {
+  if (msgType === 'ptt' || msgType === 'audio') return paths.audioDir;
+  if (mimetype?.startsWith('audio/') || mimetype === 'application/ogg') return paths.audioDir;
   if (mimetype?.startsWith('image/') || mimetype?.startsWith('video/')) return paths.mediaDir;
   return paths.docsDir;
+}
+
+function mediaEmbedPath(filePath, chatsDir) {
+  const relative = path.relative(chatsDir, filePath).replace(/\\/g, '/');
+  return relative.startsWith('..') ? relative : path.basename(filePath);
 }
 
 async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = null) {
@@ -327,6 +340,7 @@ async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = 
   const shortId = msg.id?.id || messageId;
   const date = new Date(msg.timestamp * 1000);
   const sender = await getSenderInfo(client, msg, paths, contactCache);
+  let mediaState = null;
   const avatarString = sender.avatarFile ? `![[${sender.avatarFile}|24]] ` : '';
   let block = `> [!note] ${avatarString}**${sender.name}** - *${formatLocalDate(date)}*\n>\n`;
 
@@ -359,11 +373,18 @@ async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = 
           || media.mimetype?.split('/')[1]?.split(';')[0]
           || 'bin';
         const filename = media.filename || `${shortId}.${ext}`;
-        const targetDir = mediaTargetDir(media.mimetype, paths);
+        const targetDir = mediaTargetDir(media.mimetype, paths, msg.type);
         ensureDir(targetDir);
         const filePath = path.join(targetDir, filename);
         if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, Buffer.from(media.data, 'base64'));
-        block += `> ![[${filename}]]\n>\n`;
+        const embedPath = mediaEmbedPath(filePath, paths.chatsDir);
+        block += `> ![[${embedPath}]]\n>\n`;
+        mediaState = {
+          filename,
+          mimetype: media.mimetype || null,
+          relativePath: path.relative(paths.baseDir, filePath).replace(/\\/g, '/'),
+          folder: path.basename(targetDir),
+        };
       }
     } catch (error) {
       block += `> *[Error downloading media: ${error.message}]*\n>\n`;
@@ -371,7 +392,10 @@ async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = 
   }
 
   if (existingOcr) {
-    block += `> [!receipt] 📄 **OCR Extracted** — Confidence: ${existingOcr.confidence}%\n`;
+    block += `> [!receipt] **OCR Extracted** — Confidence: ${existingOcr.confidence}%\n`;
+    if (existingOcr.imageFile) {
+      block += `> **Source attachment:** ![[${existingOcr.imageFile.replace(/\\/g, '/')}]]\n`;
+    }
     if (existingOcr.vendor) block += `> **Vendor:** ${existingOcr.vendor}\n`;
     if (existingOcr.date) block += `> **Date:** ${existingOcr.date}\n`;
     if (existingOcr.total) block += `> **Total:** ${existingOcr.currency || 'SAR'} ${existingOcr.total}\n`;
@@ -413,10 +437,12 @@ async function renderLiveRecord(client, msg, paths, contactCache, existingOcr = 
       legacyId: shortId,
       timestamp,
       monthKey: monthKeyFromDate(date),
-      senderName: sender.name,
-      type: msg.type,
-      bodyHash: hashText(msg.body || ''),
-    },
+        senderName: sender.name,
+        type: msg.type,
+        bodyHash: hashText(msg.body || ''),
+        hasMedia: !!msg.hasMedia,
+        media: mediaState,
+      },
   };
 }
 

@@ -24,9 +24,12 @@ WhatsAppAuth/
 .wwebjs_cache/
 **/profiles.json
 avatars-cache.json
+avatars-cache.json.migrated
+avatar-cache/
 
 # Tooling / local artifacts
 .playwright-mcp/
+tools/whisper.cpp/
 
 # Editor directories and files
 .vscode/*

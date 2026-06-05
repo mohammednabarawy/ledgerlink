@@ -1,7 +1,10 @@
 /** Remove API secrets from profile objects before persisting to disk. */
 export function stripTelegramSecretsFromProfile(profile) {
   if (!profile?.telegram) return profile;
-  const { apiId, apiHash, ...telegramRest } = profile.telegram;
+  const telegramRest = { ...profile.telegram };
+  delete telegramRest.apiId;
+  delete telegramRest.apiHash;
+  delete telegramRest.session;
   return { ...profile, telegram: telegramRest };
 }
 
