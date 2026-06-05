@@ -40,6 +40,11 @@ contextBridge.exposeInMainWorld('api', {
   downloadWhisperModel: (modelSize) => ipcRenderer.invoke('services:downloadWhisperModel', modelSize),
   getGlobalSettings: () => ipcRenderer.invoke('profile:getGlobalSettings'),
   updateGlobalSettings: (updates) => ipcRenderer.invoke('profile:updateGlobalSettings', updates),
+  getAssistantProviders: () => ipcRenderer.invoke('assistant:getProviders'),
+  listAssistantModels: (providerId) => ipcRenderer.invoke('assistant:listModels', providerId),
+  testAssistantConnection: (overrides) => ipcRenderer.invoke('assistant:testConnection', overrides),
+  suggestReply: (payload) => ipcRenderer.invoke('assistant:suggestReply', payload),
+  sendChatMessage: (chatId, text, replyToMessageId) => ipcRenderer.invoke('chat:sendMessage', { chatId, text, replyToMessageId }),
   
   // Telegram Actions
   connectTelegram: () => ipcRenderer.invoke('telegram:connect'),
@@ -84,6 +89,7 @@ contextBridge.exposeInMainWorld('api', {
   onBackgroundOCRStatus: (callback) => ipcRenderer.on('ocr:backgroundStatus', (_event, data) => callback(data)),
   onWindowState: (callback) => ipcRenderer.on('window:state', (_event, data) => callback(data)),
   onModelDownloadProgress: (callback) => ipcRenderer.on('services:modelDownloadProgress', (_event, data) => callback(data)),
+  onAssistantProgress: (callback) => ipcRenderer.on('assistant:progress', (_event, data) => callback(data)),
   
   // Clean up listeners
   removeListeners: () => {
@@ -111,5 +117,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.removeAllListeners('ocr:backgroundStatus');
     ipcRenderer.removeAllListeners('window:state');
     ipcRenderer.removeAllListeners('services:modelDownloadProgress');
+    ipcRenderer.removeAllListeners('assistant:progress');
   }
 });

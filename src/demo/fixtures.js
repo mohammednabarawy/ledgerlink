@@ -142,9 +142,28 @@ export const DEMO_REVIEW_MESSAGES = [
   },
 ];
 
+export const DEMO_ASSISTANT_DRAFTS = [
+  "I'll archive the March receipt images this afternoon and run OCR on the supplier invoices.",
+  "Thanks Sarah — I'm on the receipts now. I'll confirm once they're in Obsidian.",
+  "Understood. I'll process the March images and share the archived folder link shortly.",
+];
+
 export const DEMO_GLOBAL_SETTINGS = {
   transcription: { modelSize: 'tiny' },
   telegram: { apiId: '28471936', apiHash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6' },
+  assistant: {
+    enabled: true,
+    provider: 'ollama',
+    baseUrl: 'http://127.0.0.1:11434',
+    model: 'llama3.2:3b',
+    apiKey: '',
+    defaultTone: 'professional',
+    replyLanguage: 'auto',
+    maxContextMessages: 40,
+    includeOcrText: true,
+    temperature: 0.7,
+    draftCount: 3,
+  },
 };
 
 export const DEMO_DOWNLOADED_MODELS = {

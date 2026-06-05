@@ -483,6 +483,33 @@ export class TelegramArchiveClient {
     return formattedMessages;
   }
 
+  async sendChatMessage(chatId, text, replyToMessageId = null) {
+    if (!this.client || this.state !== 'READY') {
+      throw new Error('Telegram client not ready');
+    }
+
+    const trimmed = String(text || '').trim();
+    if (!trimmed) throw new Error('Message text is required');
+
+    const rawChatId = chatId.startsWith('tg:') ? chatId.substring(3) : chatId;
+    const entity = await this.client.getEntity(rawChatId);
+    const options = { message: trimmed };
+
+    if (replyToMessageId) {
+      const msgId = parseInt(String(replyToMessageId).split(':').pop(), 10);
+      if (Number.isFinite(msgId) && msgId > 0) {
+        options.replyTo = msgId;
+      }
+    }
+
+    const result = await this.client.sendMessage(entity, options);
+    const peerId = await this.client.getPeerId(entity);
+    return {
+      success: true,
+      messageId: `tg:${peerId}:${result.id}`,
+    };
+  }
+
   setupWatcher(onMessage) {
     if (!this.client || this.state !== 'READY') return;
     

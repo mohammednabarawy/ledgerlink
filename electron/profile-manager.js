@@ -31,6 +31,19 @@ export class ProfileManager {
         },
         appearance: {
           theme: 'system'
+        },
+        assistant: {
+          enabled: false,
+          provider: 'ollama',
+          baseUrl: '',
+          model: 'llama3.2:3b',
+          apiKey: '',
+          defaultTone: 'professional',
+          replyLanguage: 'auto',
+          maxContextMessages: 40,
+          includeOcrText: true,
+          temperature: 0.7,
+          draftCount: 3,
         }
       },
       profiles: {}
@@ -431,6 +444,21 @@ export class ProfileManager {
     if (!settings.telegram) {
       settings.telegram = { apiId: '', apiHash: '' };
     }
+    if (!settings.assistant) {
+      settings.assistant = {
+        enabled: false,
+        provider: 'ollama',
+        baseUrl: '',
+        model: 'llama3.2:3b',
+        apiKey: '',
+        defaultTone: 'professional',
+        replyLanguage: 'auto',
+        maxContextMessages: 40,
+        includeOcrText: true,
+        temperature: 0.7,
+        draftCount: 3,
+      };
+    }
     return settings;
   }
 
@@ -452,6 +480,10 @@ export class ProfileManager {
 
     if (updates.appearance) {
       this.config.settings.appearance = { ...this.config.settings.appearance, ...updates.appearance };
+    }
+
+    if (updates.assistant) {
+      this.config.settings.assistant = { ...this.config.settings.assistant, ...updates.assistant };
     }
 
     this.save();

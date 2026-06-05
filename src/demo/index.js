@@ -1,4 +1,5 @@
 import {
+  DEMO_ASSISTANT_DRAFTS,
   DEMO_BACKGROUND_OCR,
   DEMO_DOWNLOADED_MODELS,
   DEMO_GLOBAL_SETTINGS,
@@ -78,6 +79,27 @@ export function getDemoBootstrap(scene) {
         reviewLoading: false,
       };
 
+    case 'review-assistant':
+      return {
+        ...base,
+        activePlatform: 'whatsapp',
+        isAuthenticated: true,
+        accountInfo: DEMO_WHATSAPP_ACCOUNT,
+        chats: DEMO_WHATSAPP_CHATS,
+        selectedChat: DEMO_SELECTED_WA_CHAT,
+        reviewOpen: true,
+        reviewMessages: DEMO_REVIEW_MESSAGES,
+        reviewLoading: false,
+        assistantPanelOpen: true,
+        assistantTargetId: 'demo-msg-1',
+        assistantDrafts: DEMO_ASSISTANT_DRAFTS,
+        assistantTone: 'professional',
+        settingsAssistantEnabled: true,
+        settingsAssistantProvider: 'ollama',
+        settingsAssistantBaseUrl: 'http://127.0.0.1:11434',
+        settingsAssistantModel: 'llama3.2:3b',
+      };
+
     case 'telegram':
       return {
         ...base,
@@ -117,6 +139,20 @@ export function getDemoBootstrap(scene) {
         accountInfo: DEMO_WHATSAPP_ACCOUNT,
         globalSettingsModalOpen: true,
         settingsTab: 'transcription',
+      };
+
+    case 'settings-assistant':
+      return {
+        ...base,
+        activePlatform: 'whatsapp',
+        isAuthenticated: true,
+        accountInfo: DEMO_WHATSAPP_ACCOUNT,
+        globalSettingsModalOpen: true,
+        settingsTab: 'assistant',
+        settingsAssistantEnabled: true,
+        settingsAssistantProvider: 'ollama',
+        settingsAssistantBaseUrl: 'http://127.0.0.1:11434',
+        settingsAssistantModel: 'llama3.2:3b',
       };
 
     case 'archive-progress':

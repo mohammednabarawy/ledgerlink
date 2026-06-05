@@ -37,9 +37,19 @@ import {
   Check,
   Send,
   Cpu,
+  Sparkles,
+  Copy,
 } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
 import { getDemoScene, getDemoBootstrap } from './demo/index.js';
+import { DEMO_ASSISTANT_DRAFTS } from './demo/fixtures.js';
+
+const ASSISTANT_PROVIDER_DEFAULTS = {
+  ollama: { baseUrl: 'http://127.0.0.1:11434', model: 'llama3.2:3b' },
+  lmstudio: { baseUrl: 'http://127.0.0.1:1234/v1', model: '' },
+  opencode: { baseUrl: 'https://opencode.ai/zen/v1', model: 'mimo-v2.5-free' },
+  'openai-compatible': { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+};
 
 const chatFilters = ['all', 'groups', 'contacts', 'archived'];
 
@@ -240,6 +250,29 @@ function App() {
   const [reviewLoading, setReviewLoading] = useState(demoBoot?.reviewLoading ?? false);
   const [reviewError, setReviewError] = useState(null);
 
+  // Reply assistant
+  const [assistantPanelOpen, setAssistantPanelOpen] = useState(!!demoBoot?.assistantPanelOpen);
+  const [assistantTargetId, setAssistantTargetId] = useState(demoBoot?.assistantTargetId ?? null);
+  const [assistantDrafts, setAssistantDrafts] = useState(demoBoot?.assistantDrafts ?? []);
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantError, setAssistantError] = useState(null);
+  const [assistantStreamingText, setAssistantStreamingText] = useState('');
+  const [assistantInstruction, setAssistantInstruction] = useState('');
+  const [assistantTone, setAssistantTone] = useState(demoBoot?.assistantTone ?? 'professional');
+  const [copiedDraftIndex, setCopiedDraftIndex] = useState(null);
+  const [settingsAssistantEnabled, setSettingsAssistantEnabled] = useState(demoBoot?.settingsAssistantEnabled ?? false);
+  const [settingsAssistantProvider, setSettingsAssistantProvider] = useState(demoBoot?.settingsAssistantProvider ?? 'ollama');
+  const [settingsAssistantBaseUrl, setSettingsAssistantBaseUrl] = useState(demoBoot?.settingsAssistantBaseUrl ?? ASSISTANT_PROVIDER_DEFAULTS.ollama.baseUrl);
+  const [settingsAssistantModel, setSettingsAssistantModel] = useState(demoBoot?.settingsAssistantModel ?? ASSISTANT_PROVIDER_DEFAULTS.ollama.model);
+  const [settingsAssistantApiKey, setSettingsAssistantApiKey] = useState('');
+  const [settingsAssistantTone, setSettingsAssistantTone] = useState('professional');
+  const [settingsAssistantReplyLanguage, setSettingsAssistantReplyLanguage] = useState('auto');
+  const [assistantTestStatus, setAssistantTestStatus] = useState(null);
+  const [assistantTestLoading, setAssistantTestLoading] = useState(false);
+  const [confirmSendIndex, setConfirmSendIndex] = useState(null);
+  const [sendDraftIndex, setSendDraftIndex] = useState(null);
+  const [sendDraftError, setSendDraftError] = useState(null);
+
   // Layout States
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isChatsCollapsed, setIsChatsCollapsed] = useState(false);
@@ -258,6 +291,9 @@ function App() {
       setGlobalSettings(settings || { transcription: { modelSize: 'tiny' } });
       setDownloadedModels(models || {});
       setVaultPath(active?.vaultPath || null);
+      if (settings?.assistant?.defaultTone) {
+        setAssistantTone(settings.assistant.defaultTone);
+      }
     } catch (e) {
       console.error('Failed to load profiles and settings:', e);
     }
@@ -454,6 +490,11 @@ function App() {
         window.api.getWhisperModels().then(setDownloadedModels).catch(() => {});
       }
     });
+    window.api.onAssistantProgress?.((data) => {
+      if (data?.phase === 'streaming' && data.text) {
+        setAssistantStreamingText(data.text);
+      }
+    });
     window.api.getWindowState?.().then((state) => setIsWindowMaximized(!!state.maximized)).catch(() => {});
     window.api.onWindowState?.((state) => setIsWindowMaximized(!!state.maximized));
 
@@ -601,6 +642,17 @@ function App() {
     setSettingsOcrAutoScan(!!activeProfile?.ocr?.autoScan);
     setSettingsTelegramApiId(globalSettings?.telegram?.apiId || '');
     setSettingsTelegramApiHash(globalSettings?.telegram?.apiHash || '');
+    const asst = globalSettings?.assistant || {};
+    const provider = asst.provider || 'ollama';
+    const providerDefaults = ASSISTANT_PROVIDER_DEFAULTS[provider] || ASSISTANT_PROVIDER_DEFAULTS.ollama;
+    setSettingsAssistantEnabled(!!asst.enabled);
+    setSettingsAssistantProvider(provider);
+    setSettingsAssistantBaseUrl(asst.baseUrl || providerDefaults.baseUrl);
+    setSettingsAssistantModel(asst.model || providerDefaults.model);
+    setSettingsAssistantApiKey(asst.apiKey || '');
+    setSettingsAssistantTone(asst.defaultTone || 'professional');
+    setSettingsAssistantReplyLanguage(asst.replyLanguage || 'auto');
+    setAssistantTestStatus(null);
     setGlobalSettingsModalOpen(true);
   }, [activeProfile, vaultPath, globalSettings]);
 
@@ -657,6 +709,52 @@ function App() {
     }
   };
 
+  const handleSaveSettingsAssistant = async () => {
+    if (!window.api) return;
+    setSettingsSaving(true);
+    try {
+      const updated = await window.api.updateGlobalSettings({
+        assistant: {
+          enabled: settingsAssistantEnabled,
+          provider: settingsAssistantProvider,
+          baseUrl: settingsAssistantBaseUrl.trim(),
+          model: settingsAssistantModel.trim(),
+          apiKey: settingsAssistantApiKey.trim(),
+          defaultTone: settingsAssistantTone,
+          replyLanguage: settingsAssistantReplyLanguage,
+        },
+      });
+      setGlobalSettings(updated);
+      if (updated?.assistant?.defaultTone) {
+        setAssistantTone(updated.assistant.defaultTone);
+      }
+    } catch (err) {
+      console.error('Failed to save assistant settings:', err);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const handleTestAssistantConnection = async () => {
+    if (!window.api?.testAssistantConnection) return;
+    setAssistantTestLoading(true);
+    setAssistantTestStatus(null);
+    try {
+      const result = await window.api.testAssistantConnection({
+        enabled: true,
+        provider: settingsAssistantProvider,
+        baseUrl: settingsAssistantBaseUrl.trim(),
+        model: settingsAssistantModel.trim(),
+        apiKey: settingsAssistantApiKey.trim(),
+      });
+      setAssistantTestStatus(result);
+    } catch (err) {
+      setAssistantTestStatus({ ok: false, error: err.message || String(err) });
+    } finally {
+      setAssistantTestLoading(false);
+    }
+  };
+
   const telegramCredentialsConfigured = Boolean(
     globalSettings?.telegram?.apiId?.trim() && globalSettings?.telegram?.apiHash?.trim(),
   );
@@ -689,10 +787,20 @@ function App() {
     setReviewOpen(true);
     setReviewLoading(true);
     setReviewError(null);
+    setAssistantDrafts([]);
+    setAssistantError(null);
+    setAssistantStreamingText('');
+    setAssistantPanelOpen(false);
+    setConfirmSendIndex(null);
+    setSendDraftError(null);
+    setSendDraftIndex(null);
     try {
       // Review loads same messages list DTO
       const messages = await window.api.getChatMessages(selectedChat.id, { limit: 300 });
       setReviewMessages(messages);
+
+      const lastIncoming = [...messages].reverse().find((m) => !m.fromMe && (m.body?.trim() || m.hasMedia));
+      setAssistantTargetId(lastIncoming?.id || messages[messages.length - 1]?.id || null);
       
       const initialOcr = {};
       messages.forEach(msg => {
@@ -706,6 +814,112 @@ function App() {
     } finally {
       setReviewLoading(false);
     }
+  };
+
+  const handleSuggestReply = async () => {
+    if (!selectedChat) return;
+    setAssistantLoading(true);
+    setAssistantError(null);
+    setAssistantDrafts([]);
+    setAssistantStreamingText('');
+    setAssistantPanelOpen(true);
+
+    if (demoScene) {
+      await new Promise((r) => setTimeout(r, 600));
+      setAssistantDrafts(DEMO_ASSISTANT_DRAFTS);
+      setAssistantLoading(false);
+      return;
+    }
+
+    if (!window.api?.suggestReply) return;
+
+    try {
+      const result = await window.api.suggestReply({
+        chatName: selectedChat.name,
+        platform: activePlatform,
+        chatType: selectedChat.isGroup ? 'group' : 'contact',
+        messages: reviewMessages,
+        targetMessageId: assistantTargetId,
+        tone: assistantTone,
+        instruction: assistantInstruction,
+        ocrEnrichment: ocrResultsMap,
+      });
+      setAssistantDrafts(result?.drafts || []);
+    } catch (error) {
+      setAssistantError(error.message || t('assistantError'));
+    } finally {
+      setAssistantLoading(false);
+      setAssistantStreamingText('');
+    }
+  };
+
+  const handleCopyDraft = async (text, index) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedDraftIndex(index);
+      setTimeout(() => setCopiedDraftIndex(null), 2000);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  };
+
+  const handleSendDraft = async (draft, index) => {
+    if (!selectedChat || !draft?.trim()) return;
+
+    if (selectedChat.isReadOnly) {
+      setSendDraftError(t('sendReplyReadOnly'));
+      return;
+    }
+    if (!canSendReplies) {
+      setSendDraftError(t('sendReplyNotConnected'));
+      return;
+    }
+
+    setSendDraftIndex(index);
+    setSendDraftError(null);
+    setConfirmSendIndex(null);
+
+    const appendSentMessage = (body) => {
+      const now = new Date();
+      const senderLabel = activePlatform === 'whatsapp'
+        ? (accountInfo?.pushname || 'Me')
+        : (tgAccountInfo?.pushname || 'Me');
+      setReviewMessages((prev) => [
+        ...prev,
+        {
+          id: `local-sent-${Date.now()}`,
+          senderName: senderLabel,
+          displayTime: now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+          fromMe: true,
+          body,
+          hasMedia: false,
+          type: 'chat',
+        },
+      ]);
+    };
+
+    if (demoScene) {
+      await new Promise((r) => setTimeout(r, 400));
+      appendSentMessage(draft);
+      setSendDraftIndex(null);
+      return;
+    }
+
+    if (!window.api?.sendChatMessage) return;
+
+    try {
+      await window.api.sendChatMessage(selectedChat.id, draft, assistantTargetId);
+      appendSentMessage(draft);
+    } catch (error) {
+      setSendDraftError(error.message || t('sendReplyFailed'));
+    } finally {
+      setSendDraftIndex(null);
+    }
+  };
+
+  const handleReplyToMessage = (messageId) => {
+    setAssistantTargetId(messageId);
+    setAssistantPanelOpen(true);
   };
 
   const handleRunOCRForMessage = async (messageId) => {
@@ -932,6 +1146,25 @@ function App() {
   const commandDisabled = !selectedChat || !vaultPath || isWorking;
   const isPlatformAuthenticated = activePlatform === 'whatsapp' ? isAuthenticated : isTGAuthenticated;
   const reviewHasOcrCandidates = reviewMessages.some(message => message.type === 'image');
+
+  const assistantConfigured = useMemo(() => {
+    const a = globalSettings?.assistant;
+    if (!a?.enabled) return false;
+    if (!a.model?.trim()) return false;
+    if ((a.provider === 'opencode' || a.provider === 'openai-compatible') && !a.apiKey?.trim()) return false;
+    return true;
+  }, [globalSettings]);
+
+  const assistantTargetMessage = useMemo(
+    () => reviewMessages.find((m) => m.id === assistantTargetId) || null,
+    [reviewMessages, assistantTargetId],
+  );
+
+  const canSendReplies = Boolean(
+    selectedChat
+    && !selectedChat.isReadOnly
+    && (activePlatform === 'whatsapp' ? isAuthenticated : isTGAuthenticated),
+  );
   const activePlatformLabel = activePlatform === 'whatsapp' ? 'WhatsApp' : 'Telegram';
   const desktopStatus = isWorking
     ? archiveStatus || t('startingArchive')
@@ -1794,7 +2027,7 @@ function App() {
 
             <div className="flex flex-1 overflow-hidden h-[600px] max-h-[80vh]">
               <div className="w-48 bg-slate-900/50 border-r border-white/10 flex flex-col p-3 gap-1 overflow-y-auto shrink-0">
-                {(['vault', 'ocr', 'transcription', 'telegram']).map((tab) => (
+                {(['vault', 'ocr', 'transcription', 'telegram', 'assistant']).map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -1807,7 +2040,9 @@ function App() {
                         ? t('ocrSettings')
                         : tab === 'transcription'
                           ? t('settingsTranscription')
-                          : t('telegramApiCredentials')}
+                          : tab === 'assistant'
+                            ? t('assistantSettings')
+                            : t('telegramApiCredentials')}
                   </button>
                 ))}
               </div>
@@ -1951,6 +2186,150 @@ function App() {
                   </div>
                 )}
 
+                {settingsTab === 'assistant' && (
+                  <div className="space-y-6 max-w-2xl">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-100">{t('assistantSettings')}</h3>
+                      <p className="text-slate-400 text-sm mt-1">{t('assistantSettingsDesc')}</p>
+                    </div>
+
+                    <div className="surface-card p-5 space-y-4">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={settingsAssistantEnabled}
+                          onChange={(e) => setSettingsAssistantEnabled(e.target.checked)}
+                          className="h-4 w-4 accent-emerald-500"
+                        />
+                        {t('assistantEnabled')}
+                      </label>
+
+                      <div className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-200">{t('assistantProvider')}</label>
+                        <select
+                          value={settingsAssistantProvider}
+                          onChange={(e) => {
+                            const provider = e.target.value;
+                            setSettingsAssistantProvider(provider);
+                            const defs = ASSISTANT_PROVIDER_DEFAULTS[provider];
+                            if (defs) {
+                              setSettingsAssistantBaseUrl(defs.baseUrl);
+                              setSettingsAssistantModel(defs.model);
+                            }
+                            setAssistantTestStatus(null);
+                          }}
+                          className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                        >
+                          <option value="ollama">{t('assistantProviderOllama')}</option>
+                          <option value="lmstudio">{t('assistantProviderLmstudio')}</option>
+                          <option value="opencode">{t('assistantProviderOpencode')}</option>
+                          <option value="openai-compatible">{t('assistantProviderOpenai')}</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-200">{t('assistantBaseUrl')}</label>
+                        <input
+                          type="text"
+                          value={settingsAssistantBaseUrl}
+                          onChange={(e) => setSettingsAssistantBaseUrl(e.target.value)}
+                          className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-200">{t('assistantModel')}</label>
+                        <input
+                          type="text"
+                          value={settingsAssistantModel}
+                          onChange={(e) => setSettingsAssistantModel(e.target.value)}
+                          placeholder={settingsAssistantProvider === 'lmstudio' ? 'model-id-from-lm-studio' : 'llama3.2:3b'}
+                          className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono"
+                        />
+                        {settingsAssistantProvider === 'opencode' && (
+                          <p className="text-xs text-slate-500">
+                            e.g. mimo-v2.5-free, nemotron-3-ultra-free, deepseek-v4-flash-free, big-pickle
+                          </p>
+                        )}
+                      </div>
+
+                      {(settingsAssistantProvider === 'opencode' || settingsAssistantProvider === 'openai-compatible') && (
+                        <div className="space-y-1">
+                          <label className="text-sm font-semibold text-slate-200">{t('assistantApiKey')}</label>
+                          <input
+                            type="password"
+                            value={settingsAssistantApiKey}
+                            onChange={(e) => setSettingsAssistantApiKey(e.target.value)}
+                            className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono"
+                          />
+                          <p className="text-xs text-slate-500">{t('assistantApiKeyHint')}</p>
+                        </div>
+                      )}
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-1">
+                          <label className="text-sm font-semibold text-slate-200">{t('assistantDefaultTone')}</label>
+                          <select
+                            value={settingsAssistantTone}
+                            onChange={(e) => setSettingsAssistantTone(e.target.value)}
+                            className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value="professional">{t('assistantToneProfessional')}</option>
+                            <option value="friendly">{t('assistantToneFriendly')}</option>
+                            <option value="concise">{t('assistantToneConcise')}</option>
+                            <option value="formal">{t('assistantToneFormal')}</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-sm font-semibold text-slate-200">{t('assistantReplyLanguage')}</label>
+                          <select
+                            value={settingsAssistantReplyLanguage}
+                            onChange={(e) => setSettingsAssistantReplyLanguage(e.target.value)}
+                            className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value="auto">{t('assistantLangAuto')}</option>
+                            <option value="en">{t('assistantLangEn')}</option>
+                            <option value="ar">{t('assistantLangAr')}</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {settingsAssistantProvider === 'ollama' || settingsAssistantProvider === 'lmstudio'
+                          ? t('assistantPrivacyLocal')
+                          : t('assistantPrivacyCloud')}
+                      </p>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleTestAssistantConnection}
+                          disabled={assistantTestLoading || !settingsAssistantModel.trim()}
+                          className="toolbar-button text-sm disabled:opacity-50"
+                        >
+                          {assistantTestLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                          {t('assistantTestConnection')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveSettingsAssistant}
+                          disabled={settingsSaving}
+                          className="primary-command text-sm disabled:opacity-50"
+                        >
+                          {settingsSaving ? <Loader2 size={16} className="animate-spin" /> : null}
+                          {t('save')}
+                        </button>
+                      </div>
+
+                      {assistantTestStatus && (
+                        <div className={`text-sm rounded-lg px-3 py-2 border ${assistantTestStatus.ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/30 bg-rose-500/10 text-rose-300'}`}>
+                          {assistantTestStatus.ok ? t('assistantTestOk') : `${t('assistantTestFailed')}: ${assistantTestStatus.error || ''}`}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {settingsTab === 'transcription' && (
                   <div className="space-y-6 max-w-2xl">
                     <div>
@@ -2081,14 +2460,28 @@ function App() {
                     </div>
                   )}
                   {reviewMessages.map((message) => (
-                    <article key={message.id} className={`message-row ${message.fromMe ? 'from-me' : ''}`}>
+                    <article
+                      key={message.id}
+                      className={`message-row ${message.fromMe ? 'from-me' : ''} ${assistantTargetId === message.id ? 'ring-1 ring-emerald-500/40' : ''}`}
+                    >
                       <div className="message-meta">
                         <span className="font-semibold">{message.senderName}</span>
                         <span>{message.displayTime}</span>
                       </div>
-                      <div className="message-body">
+                      <div className="message-body" dir="auto">
                         {message.hasMedia && <p className="media-placeholder">{t('mediaMessage')} · {message.type}</p>}
                         {message.body ? <p>{message.body}</p> : !message.hasMedia && <p className="text-slate-500">{t('emptyMessage')}</p>}
+
+                        {!message.fromMe && (message.body?.trim() || message.hasMedia) && (
+                          <button
+                            type="button"
+                            onClick={() => handleReplyToMessage(message.id)}
+                            className="toolbar-button text-xs py-1.5 px-3 mt-2 self-start flex items-center gap-1.5 bg-slate-800 hover:bg-emerald-500/10 hover:border-emerald-500/30"
+                          >
+                            <Sparkles size={12} className="text-emerald-300" />
+                            {t('helpMeReply')}
+                          </button>
+                        )}
                         
                         {message.type === 'image' && (
                           <div className="mt-2 flex flex-col gap-2">
@@ -2140,6 +2533,156 @@ function App() {
                     </article>
                   ))}
                 </>
+              )}
+            </div>
+
+            <div className="review-footer">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAssistantPanelOpen((open) => !open)}
+                  className="toolbar-button text-sm flex items-center gap-2"
+                >
+                  <Sparkles size={14} className="text-emerald-300" />
+                  {t('replyAssistant')}
+                </button>
+                {assistantConfigured && (
+                  <button
+                    type="button"
+                    onClick={handleSuggestReply}
+                    disabled={assistantLoading || reviewLoading || !reviewMessages.length}
+                    className="primary-command text-sm disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {assistantLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                    {assistantLoading ? t('assistantGenerating') : t('suggestReply')}
+                  </button>
+                )}
+              </div>
+
+              {assistantPanelOpen && (
+                <div className="assistant-panel mt-3" dir="auto">
+                  {!assistantConfigured ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-amber-300/90">{t('assistantNotConfigured')}</p>
+                      <button type="button" className="toolbar-button text-sm" onClick={() => openAppSettings('assistant')}>
+                        {t('assistantConfigure')}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {assistantTargetMessage && (
+                        <p className="text-xs text-slate-400">
+                          <span className="font-semibold text-slate-300">{t('replyToMessage')}:</span>{' '}
+                          {(assistantTargetMessage.body || t('mediaMessage')).slice(0, 120)}
+                          {(assistantTargetMessage.body || '').length > 120 ? '…' : ''}
+                        </p>
+                      )}
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-400">{t('assistantDefaultTone')}</label>
+                          <select
+                            value={assistantTone}
+                            onChange={(e) => setAssistantTone(e.target.value)}
+                            className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
+                          >
+                            <option value="professional">{t('assistantToneProfessional')}</option>
+                            <option value="friendly">{t('assistantToneFriendly')}</option>
+                            <option value="concise">{t('assistantToneConcise')}</option>
+                            <option value="formal">{t('assistantToneFormal')}</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1 sm:col-span-1">
+                          <label className="text-xs font-semibold text-slate-400">{t('assistantInstruction')}</label>
+                          <input
+                            type="text"
+                            value={assistantInstruction}
+                            onChange={(e) => setAssistantInstruction(e.target.value)}
+                            placeholder={t('assistantInstructionPlaceholder')}
+                            className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </div>
+
+                      {assistantError && (
+                        <div role="alert" className="error-banner text-sm">
+                          <AlertCircle size={16} />
+                          <span>{assistantError}</span>
+                        </div>
+                      )}
+
+                      {sendDraftError && (
+                        <div role="alert" className="error-banner text-sm">
+                          <AlertCircle size={16} />
+                          <span>{sendDraftError}</span>
+                        </div>
+                      )}
+
+                      {assistantLoading && assistantStreamingText && (
+                        <div className="assistant-draft-card text-slate-400 whitespace-pre-wrap">{assistantStreamingText}</div>
+                      )}
+
+                      {assistantDrafts.map((draft, index) => (
+                        <div key={index} className="assistant-draft-card">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <span className="text-xs font-semibold text-emerald-400">{t('assistantDraft')} {index + 1}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {confirmSendIndex === index ? (
+                                <>
+                                  <span className="text-xs text-slate-400">{t('sendReplyConfirm')}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSendDraft(draft, index)}
+                                    disabled={sendDraftIndex === index}
+                                    className="primary-command text-xs py-1 px-2 flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    {sendDraftIndex === index ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                                    {sendDraftIndex === index ? t('sendingReply') : t('sendReply')}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmSendIndex(null)}
+                                    disabled={sendDraftIndex === index}
+                                    className="toolbar-button text-xs py-1 px-2"
+                                  >
+                                    {t('sendReplyCancel')}
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyDraft(draft, index)}
+                                    className="toolbar-button text-xs py-1 px-2 flex items-center gap-1"
+                                  >
+                                    <Copy size={12} />
+                                    {copiedDraftIndex === index ? t('draftCopied') : t('copyDraft')}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSendDraftError(null);
+                                      setConfirmSendIndex(index);
+                                    }}
+                                    disabled={!canSendReplies || sendDraftIndex !== null}
+                                    title={!canSendReplies ? (selectedChat?.isReadOnly ? t('sendReplyReadOnly') : t('sendReplyNotConnected')) : undefined}
+                                    className="toolbar-button text-xs py-1 px-2 flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Send size={12} className="text-emerald-300" />
+                                    {t('sendReply')}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <p className="whitespace-pre-wrap">{draft}</p>
+                        </div>
+                      ))}
+
+                      <p className="text-[11px] text-slate-500">{t('assistantDisclaimer')}</p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

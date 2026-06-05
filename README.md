@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Archive WhatsApp &amp; Telegram chats into structured Obsidian vaults</strong><br/>
-  Built for accountants, administrators, and anyone who needs searchable, local-first message archives.
+  Searchable, local-first message archives with AI-assisted replies.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 ## Overview
 
-LedgerLink is a desktop app that connects to **WhatsApp Web** and **Telegram**, lets you pick an **Obsidian vault**, and archives chats into clean monthly Markdown with linked media. It supports multiple local accounts, background watching, OCR, PDF scanning, and local voice/video transcription.
+LedgerLink is a desktop app that connects to **WhatsApp Web** and **Telegram**, lets you pick an **Obsidian vault**, and archives chats into clean monthly Markdown with linked media. Review conversations, get **context-aware reply suggestions** from a local or cloud LLM, and **send replies** without leaving the app. It also supports multiple local accounts, background watching, OCR, PDF scanning, and local voice/video transcription.
 
 <p align="center">
   <img src="docs/screenshots/demo-workspace.png" alt="LedgerLink workspace with chat list, archive controls, and OCR backlog" width="960" />
@@ -44,6 +44,8 @@ LedgerLink is a desktop app that connects to **WhatsApp Web** and **Telegram**, 
 | **Auto-archive watcher** | Debounced background sync for new, edited, and revoked messages |
 | **OCR** | Image and PDF text extraction (Tesseract) with English + Arabic |
 | **Transcription** | Local whisper.cpp + ffmpeg for voice notes and video |
+| **AI reply assistant** | Context-aware draft replies in Review (Ollama, LM Studio, OpenCode Zen, or OpenAI-compatible APIs) |
+| **Send from app** | Send a suggested reply to WhatsApp or Telegram directly from the Review modal |
 | **Bilingual UI** | English (LTR) and Arabic (RTL) with mirrored layout |
 | **Privacy-first** | Sessions and API keys stay on your machine — never bundled in releases |
 
@@ -78,12 +80,16 @@ Archive a chat, enable the watcher, and monitor OCR backlog — all from one pan
   <img src="docs/screenshots/demo-archive-progress.png" alt="Archive progress bar while writing to Obsidian" width="960" />
 </p>
 
-### Chat review &amp; OCR
+### Chat review, OCR &amp; AI replies
 
-Open the original message stream and extract text from receipt images.
+Open the original message stream, run OCR on images, get AI-suggested replies, and send them from the app.
 
 <p align="center">
   <img src="docs/screenshots/demo-review.png" alt="Review modal with sample messages and OCR button" width="720" />
+</p>
+
+<p align="center">
+  <em>AI assistant panel: use <code>?demo=review-assistant</code> for a screenshot with fictional drafts</em>
 </p>
 
 ### App Settings
@@ -91,7 +97,7 @@ Open the original message stream and extract text from receipt images.
 | | |
 |:---:|:---:|
 | <img src="docs/screenshots/app-settings-vault.png" alt="Vault settings tab" width="440" /><br/><sub>Obsidian vault path</sub> | <img src="docs/screenshots/demo-settings-ocr.png" alt="OCR settings tab" width="440" /><br/><sub>OCR language &amp; confidence</sub> |
-| <img src="docs/screenshots/demo-settings-transcription.png" alt="Whisper model downloads" width="440" /><br/><sub>Transcription models</sub> | |
+| <img src="docs/screenshots/demo-settings-transcription.png" alt="Whisper model downloads" width="440" /><br/><sub>Transcription models</sub> | <em>App Settings → Reply Assistant — use <code>?demo=settings-assistant</code></em> |
 
 ---
 
@@ -115,6 +121,23 @@ LedgerLink-1.0.0-Windows-x64-Setup.exe
 4. **Connect** WhatsApp (scan QR) or Telegram (phone + verification code).
 5. **Select a chat** in the sidebar list, then archive, review, repair, or enable the watcher.
 6. **App Settings → Transcription** — download a Whisper model when you need voice/video transcription.
+7. **App Settings → Reply Assistant** *(optional)* — enable the AI assistant and connect a provider (see below).
+8. **Review Chat** → **Suggest replies** → **Send** or **Copy** a draft.
+
+### AI reply assistant
+
+The assistant reads recent messages from the chat you are reviewing (including OCR text when available) and suggests reply drafts.
+
+| Provider | Privacy | Setup |
+|----------|---------|--------|
+| **Ollama** | Fully local | Install [Ollama](https://ollama.com), run `ollama pull llama3.2:3b`, base URL `http://127.0.0.1:11434` |
+| **LM Studio** | Fully local | Start the local server in LM Studio, base URL `http://127.0.0.1:1234/v1` |
+| **OpenCode Zen** | Cloud (free tier) | API key from [opencode.ai](https://opencode.ai), models like `mimo-v2.5-free` |
+| **OpenAI-compatible** | Cloud | Your API key and endpoint (OpenAI, Groq, etc.) |
+
+Open **App Settings → Reply Assistant**, enable the feature, pick a provider, **Test connection**, and **Save**. In **Review Chat**, click **Help me reply** on a message or **Suggest replies**, then **Send** to post via WhatsApp/Telegram (read-only channels are blocked).
+
+> Cloud providers receive a sliding window of recent chat text — not your full Obsidian vault. Prefer Ollama or LM Studio for maximum privacy.
 
 ### Telegram API credentials
 
@@ -170,6 +193,8 @@ npm run dev:vite
 | `?demo=archive-progress` | Archive progress at 62% |
 | `?demo=settings-ocr` | App Settings → OCR |
 | `?demo=settings-transcription` | App Settings → Whisper models |
+| `?demo=review-assistant` | Review modal with AI reply drafts |
+| `?demo=settings-assistant` | App Settings → Reply Assistant |
 
 Example: `http://localhost:5173/?demo=workspace`
 
@@ -199,6 +224,7 @@ For local development you may copy `.env.example` to `.env` with Telegram creden
 | Profiles & settings | `%APPDATA%\LedgerLink\profiles.json` |
 | OCR language models | `%APPDATA%\LedgerLink\tesseract-models\` |
 | Whisper models | `%APPDATA%\LedgerLink\whisper_models\` |
+| AI assistant API keys | `%APPDATA%\LedgerLink\profiles.json` (local only) |
 | Archived chats | Your chosen Obsidian vault |
 
 Nothing in the [release installer](https://github.com/mohammednabarawy/ledgerlink/releases) contains your sessions, chats, or API keys.

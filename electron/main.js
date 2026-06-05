@@ -9,6 +9,7 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import fs from 'fs';
 import { archiveChat, getChatMessages, importHistory, repairArchiveOrder, resolveArchivePaths } from './archiver.js';
+import { sendWhatsAppMessage } from './chat-send.js';
 import { ProfileManager } from './profile-manager.js';
 import { runOCR } from './ocr-engine.js';
 import { extractReceiptFields } from './ocr-extractor.js';
@@ -16,6 +17,8 @@ import { detectDocumentOcrSupport, runDocumentOCR } from './document-ocr.js';
 import { detectTranscriptionStack, getDownloadedModels, downloadWhisperModel } from './transcription-service.js';
 import { TelegramArchiveClient } from './telegram-client.js';
 import { setTelegramCredentialsProvider } from './telegram-config.js';
+import { AssistantService } from './assistant-service.js';
+import { setAssistantSettingsProvider } from './assistant-config.js';
 import { urlToDataUrl } from './account-avatars.js';
 import {
   initAvatarCache,
@@ -65,6 +68,7 @@ let waState = 'DISCONNECTED';
 let currentQr = null;
 let profileManager;
 let telegramClient;
+let assistantService;
 
 let watcherSettings = { globalEnabled: false, vaultPath: null, enabledChatIds: [] };
 const watcherTimers = new Map();
@@ -819,6 +823,10 @@ app.whenReady().then(() => {
   profileManager = new ProfileManager(userDataPath);
   profileManager.migrateTelegramCredentialsFromEnv();
   setTelegramCredentialsProvider(() => profileManager.getGlobalSettings().telegram);
+  setAssistantSettingsProvider(() => profileManager.getGlobalSettings().assistant);
+  assistantService = new AssistantService((data) => {
+    mainWindow?.webContents?.send('assistant:progress', data);
+  });
   initAvatarCache(userDataPath);
 
   // Run vault migrations for all profile vaults if configured
@@ -832,6 +840,7 @@ app.whenReady().then(() => {
   loadTelegramWatcherSettings();
   createWindow();
   telegramClient = new TelegramArchiveClient(profileManager, mainWindow);
+  registerChatSendHandler();
 
   // Autoconnect watchers if enabled on startup
   if (watcherSettings.globalEnabled) {
@@ -1488,6 +1497,20 @@ ipcMain.handle('ocr:scanMessage', async (event, chatId, messageId, vaultPath) =>
 ipcMain.handle('profile:getGlobalSettings', () => profileManager.getGlobalSettings());
 ipcMain.handle('profile:updateGlobalSettings', (event, updates) => profileManager.updateGlobalSettings(updates));
 
+ipcMain.handle('assistant:getProviders', () => assistantService?.getProviders() || {});
+ipcMain.handle('assistant:listModels', async (_event, providerId) => {
+  if (!assistantService) return { models: [] };
+  return assistantService.listModels(providerId);
+});
+ipcMain.handle('assistant:testConnection', async (_event, overrides) => {
+  if (!assistantService) return { ok: false, error: 'Assistant service not ready.' };
+  return assistantService.testConnection(overrides);
+});
+ipcMain.handle('assistant:suggestReply', async (_event, payload) => {
+  if (!assistantService) throw new Error('Assistant service not ready.');
+  return assistantService.suggestReply(payload);
+});
+
 ipcMain.handle('services:getWhisperModels', () => {
   return getDownloadedModels(app.getPath('userData'));
 });
@@ -1497,4 +1520,30 @@ ipcMain.handle('services:downloadWhisperModel', async (event, modelSize) => {
     mainWindow?.webContents?.send('services:modelDownloadProgress', progressInfo);
   });
 });
+
+function isWhatsAppConnected() {
+  return waState === 'READY' || waState === 'AUTHENTICATED';
+}
+
+function registerChatSendHandler() {
+  ipcMain.removeHandler('chat:sendMessage');
+  ipcMain.handle('chat:sendMessage', async (_event, { chatId, text, replyToMessageId }) => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) throw new Error('Message text is required');
+    if (!chatId) throw new Error('Chat ID is required');
+
+    if (chatId.startsWith('tg:')) {
+      if (!telegramClient) throw new Error('Telegram client not initialized');
+      return telegramClient.sendChatMessage(chatId, trimmed, replyToMessageId);
+    }
+
+    if (!whatsappClient || !isWhatsAppConnected()) {
+      throw new Error('WhatsApp is not connected');
+    }
+
+    return sendWhatsAppMessage(whatsappClient, chatId, trimmed, replyToMessageId);
+  });
+}
+
+registerChatSendHandler();
 
