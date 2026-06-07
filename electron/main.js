@@ -47,6 +47,47 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
+function findSystemChrome() {
+  const paths = [];
+  
+  if (process.platform === 'win32') {
+    const pf = process.env.PROGRAMFILES || 'C:\\Program Files';
+    const pf86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)';
+    const local = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : null);
+    
+    paths.push(
+      path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe')
+    );
+    if (local) {
+      paths.push(path.join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+    }
+    paths.push(
+      path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe')
+    );
+  } else if (process.platform === 'darwin') {
+    paths.push(
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+    );
+  } else {
+    paths.push(
+      '/usr/bin/google-chrome',
+      '/usr/bin/chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser'
+    );
+  }
+
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+  return null;
+}
+
 function getWhatsAppPuppeteerOptions() {
   const args = [
     '--no-sandbox',
@@ -56,9 +97,14 @@ function getWhatsAppPuppeteerOptions() {
     '--no-first-run',
     '--no-zygote',
     '--disable-gpu',
+    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   ];
 
   if (!app.isPackaged) {
+    const systemChrome = findSystemChrome();
+    if (systemChrome) {
+      return { headless: true, args, executablePath: systemChrome };
+    }
     return { headless: true, args };
   }
 
@@ -70,6 +116,11 @@ function getWhatsAppPuppeteerOptions() {
     }
   } catch (error) {
     console.warn('Could not resolve puppeteer executable for packaged build:', error?.message || error);
+  }
+
+  const systemChrome = findSystemChrome();
+  if (systemChrome) {
+    return { headless: true, args, executablePath: systemChrome };
   }
 
   return { headless: true, args };
@@ -849,6 +900,10 @@ async function connectWhatsApp() {
       dataPath: path.join(app.getPath('userData'), authDataFolder) 
     }),
     puppeteer: getWhatsAppPuppeteerOptions(),
+    webVersionCache: {
+      type: 'remote',
+      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+    },
   });
 
   whatsappClient.on('qr', (qr) => {
@@ -1354,8 +1409,30 @@ ipcMain.handle('whatsapp:logout', async () => {
     try {
       await whatsappClient.logout();
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.error('Logout failed, forcing destroy and cache purge:', error);
+      try {
+        await whatsappClient.destroy();
+      } catch (e) {
+        console.error('Destroy failed:', e);
+      }
+      whatsappClient = null;
+      waState = 'DISCONNECTED';
+      currentQr = null;
     }
+  }
+
+  // Purge local auth data path to ensure fresh state
+  try {
+    const activeProfile = profileManager?.getActiveProfile?.();
+    if (activeProfile) {
+      const authDataFolder = activeProfile.whatsapp?.authDataPath || `WhatsAppAuth/${activeProfile.id}`;
+      const authDataPath = path.join(app.getPath('userData'), authDataFolder);
+      if (fs.existsSync(authDataPath)) {
+        fs.rmSync(authDataPath, { recursive: true, force: true });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to purge auth folder:', err);
   }
 });
 

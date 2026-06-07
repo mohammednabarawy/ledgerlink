@@ -162,8 +162,8 @@ export function parseReplyDrafts(rawText, draftCount = 3) {
   if (drafts.length > 0) return drafts;
 
   const numbered = text
-    .split(/\n(?=\d+[\).\]]\s)/)
-    .map((s) => s.replace(/^\d+[\).\]]\s*/, '').trim())
+    .split(/\n(?=\d+[).\]]\s)/)
+    .map((s) => s.replace(/^\d+[).\]]\s*/, '').trim())
     .filter(Boolean);
 
   if (numbered.length > 1) return numbered.slice(0, draftCount);

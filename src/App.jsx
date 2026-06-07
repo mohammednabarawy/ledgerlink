@@ -14,7 +14,6 @@ import {
   Eye,
   FileText,
   Folder,
-  HardDrive,
   Loader2,
   LogOut,
   Maximize2,
@@ -1049,7 +1048,7 @@ function App() {
   };
 
   const handleSwitchProfile = async (id) => {
-    setProfileDropdownOpen(false);
+    setTitlebarAccountOpen(false);
     setIsLoadingChats(true);
     try {
       const switched = await window.api.switchProfile(id);
